@@ -1,0 +1,33 @@
+# LinkedIn pipeline input data
+/Saved_items/
+/input-data/
+
+# Design and reference documents for the latest version
+/v3_latest-updated/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
