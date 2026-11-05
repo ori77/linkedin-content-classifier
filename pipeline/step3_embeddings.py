@@ -100,6 +100,17 @@ def normalise(vectors):
     return vectors / np.clip(lengths, 1e-12, None)
 
 
+def validate_vectors(vectors, ids):
+    """Stop early if any embedding is unusable, instead of poisoning step 4."""
+    if not np.isfinite(vectors).all():
+        sys.exit("Some embeddings contain NaN or infinite numbers. Re-run step 3.")
+    lengths = np.linalg.norm(vectors, axis=1)
+    bad = np.where(lengths < 0.99)[0]          # an all-zero vector has length 0
+    if len(bad):
+        sys.exit(f"{len(bad)} embeddings are empty (e.g. post {ids[bad[0]]}). "
+                 "Its keyphrases may be empty - check keyphrases.jsonl.")
+
+
 # ----------------------------------------------------------------------------
 # 3. A SANITY CHECK YOU CAN READ
 # ----------------------------------------------------------------------------
@@ -148,6 +159,7 @@ def main():
         chunks.append(embed_batch(texts[start:start + BATCH_SIZE], args.model, args.url))
         print(f"  embedded {min(start + BATCH_SIZE, len(texts))}/{len(texts)}")
     vectors = normalise(np.vstack(chunks))
+    validate_vectors(vectors, ids)
     print(f"\nDone in {time.time() - started:.1f}s | shape = {vectors.shape} "
           f"(posts x dimensions)")
 
