@@ -10,6 +10,10 @@ Usage (PowerShell, venv active):
     ollama pull nomic-embed-text
     python step3_embeddings.py keyphrases.jsonl --limit 20     (quick trial)
     python step3_embeddings.py keyphrases.jsonl                (everything)
+
+Experiment: embed the SUBJECT of each post, ignoring "format" words such as
+interview / roadmap / free course (that information belongs to lens 5, content type):
+    python step3_embeddings.py keyphrases.jsonl --drop-format-words --out-prefix embeddings_subject
 """
 
 import argparse
@@ -38,6 +42,14 @@ BATCH_SIZE = 32          # how many texts we send to Ollama in one request
 # Matches a standalone year like 2026 or 1999 (but not "gpt4" or "100k").
 YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
 
+# Words that describe the FORMAT or PURPOSE of a post, not its subject.
+# Chosen from the "top words" of the first clustering reports.
+FORMAT_WORDS = (
+    "interview", "interviews", "prep", "preparation", "question", "questions",
+    "roadmap", "roadmaps", "course", "courses", "free", "guide", "guides",
+    "tutorial", "tutorials", "resources", "handbook", "playbook", "curriculum",
+)
+
 
 # ----------------------------------------------------------------------------
 # 1. READING THE KEYPHRASES
@@ -56,14 +68,40 @@ def load_keyphrases(path):
     return result
 
 
-def build_text(phrases):
-    """Turn ['rag evaluation', '2026 travel trends'] into the text we embed."""
+def make_drop_pattern(words):
+    """Build ONE regex that matches any of the words, as whole words only.
+    Returns None when there is nothing to drop."""
+    words = sorted({w.strip().lower() for w in words if w.strip()})
+    if not words:
+        return None
+    return re.compile(r"\b(?:" + "|".join(re.escape(w) for w in words) + r")\b")
+
+
+def _clean(phrases, drop_pattern):
+    """Remove years (and optionally drop-words) from each phrase; skip empty results."""
     cleaned = []
     for phrase in phrases:
-        phrase = " ".join(YEAR_PATTERN.sub("", phrase).split())  # drop year, fix spaces
-        if phrase:                                               # drop if nothing is left
+        phrase = YEAR_PATTERN.sub("", phrase)
+        if drop_pattern is not None:
+            phrase = drop_pattern.sub("", phrase)
+        phrase = " ".join(phrase.split())          # tidy the spaces
+        if phrase:
             cleaned.append(phrase)
-    return TASK_PREFIX + ", ".join(cleaned)
+    return cleaned
+
+
+def clean_phrases(phrases, drop_pattern=None):
+    """The phrases exactly as the embedding model sees them (years and drop-words removed).
+
+    If that would leave the post with NO phrases at all, we fall back to the
+    phrases without the dropping, so a post is never embedded as an empty text.
+    """
+    return _clean(phrases, drop_pattern) or _clean(phrases, None)
+
+
+def build_text(phrases, drop_pattern=None):
+    """Turn ['rag evaluation', '2026 travel trends'] into the text we embed."""
+    return TASK_PREFIX + ", ".join(clean_phrases(phrases, drop_pattern))
 
 
 # ----------------------------------------------------------------------------
@@ -140,7 +178,15 @@ def main():
                         help="embed only the first N posts (for a quick trial)")
     parser.add_argument("--model", default=EMBED_MODEL)
     parser.add_argument("--url", default=OLLAMA_URL)
+    parser.add_argument("--drop-format-words", action="store_true",
+                        help="ignore words like interview/roadmap/free/course when embedding")
+    parser.add_argument("--drop-words", default="",
+                        help="extra words to ignore, comma separated (e.g. tips,basics)")
     args = parser.parse_args()
+
+    dropped = list(FORMAT_WORDS) if args.drop_format_words else []
+    dropped += [w for w in args.drop_words.split(",") if w.strip()]
+    drop_pattern = make_drop_pattern(dropped)
 
     phrases_by_id = load_keyphrases(args.keyphrases_path)
     ids = list(phrases_by_id)
@@ -149,9 +195,16 @@ def main():
     if not ids:
         sys.exit("No keyphrases found. Has step 2 saved anything yet?")
 
-    texts = [build_text(phrases_by_id[i]) for i in ids]
+    texts = [build_text(phrases_by_id[i], drop_pattern) for i in ids]
     print(f"Posts to embed: {len(ids)} | model: {args.model}")
-    print(f"Example text sent to the model:\n  {texts[0]}\n")
+    if drop_pattern is not None:
+        plain = [build_text(phrases_by_id[i]) for i in ids]
+        changed = sum(a != b for a, b in zip(texts, plain))
+        print(f"Dropping {len(set(dropped))} words; text changed for {changed} of {len(ids)} posts")
+        print(f"Example BEFORE:\n  {plain[0]}")
+        print(f"Example AFTER:\n  {texts[0]}\n")
+    else:
+        print(f"Example text sent to the model:\n  {texts[0]}\n")
 
     started = time.time()
     chunks = []
@@ -170,6 +223,7 @@ def main():
             "task_prefix": TASK_PREFIX,
             "dimensions": int(vectors.shape[1]),
             "text_source": "keyphrases, years removed",
+            "dropped_words": sorted(set(dropped)),
             "activity_ids": ids,
         }, f, ensure_ascii=False, indent=1)
     print(f"Saved {args.out_prefix}.npy and {args.out_prefix}_meta.json")

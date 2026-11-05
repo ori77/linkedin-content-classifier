@@ -1,6 +1,9 @@
 # pipeline
 requests
 numpy
+umap-learn
+scikit-learn
+
 
 # tests
 pytest

@@ -144,3 +144,74 @@ def test_main_end_to_end_with_limit(tmp_path, monkeypatch):
     assert meta["activity_ids"] == ["0", "1", "2"]      # row i belongs to post i
     assert meta["task_prefix"] == "clustering: "
     assert np.allclose(np.linalg.norm(vectors, axis=1), 1.0)
+
+
+# ------------------------------------------------- dropping format words (new)
+def test_drop_pattern_removes_whole_words_only():
+    pattern = s3.make_drop_pattern(["free", "course"])
+    assert s3.build_text(["free ai course", "freedom of speech", "of course not"], pattern) \
+        == "clustering: ai, freedom of speech, of not"
+
+
+def test_drop_words_example_from_real_data():
+    pattern = s3.make_drop_pattern(s3.FORMAT_WORDS)
+    phrases = ["ai engineer interview prep", "rag architecture questions",
+               "llm inference traps", "system design interviews", "ai job interview guide"]
+    assert s3.build_text(phrases, pattern) == \
+        "clustering: ai engineer, rag architecture, llm inference traps, system design, ai job"
+
+
+def test_phrase_that_becomes_empty_is_dropped():
+    pattern = s3.make_drop_pattern(["interview", "questions"])
+    assert s3.build_text(["interview questions", "rag"], pattern) == "clustering: rag"
+
+
+def test_post_made_only_of_format_words_falls_back_to_original_phrases():
+    pattern = s3.make_drop_pattern(["interview", "preparation"])
+    assert s3.build_text(["interview preparation"], pattern) == "clustering: interview preparation"
+
+
+def test_no_drop_pattern_leaves_behaviour_unchanged():
+    assert s3.build_text(["rag evaluation", "interview prep"], None) == \
+        "clustering: rag evaluation, interview prep"
+    assert s3.make_drop_pattern([]) is None
+    assert s3.make_drop_pattern(["", "  "]) is None
+
+
+def test_learning_career_and_fundamentals_are_not_in_the_default_list():
+    for keep in ("learning", "career", "fundamentals", "dsa", "leetcode"):
+        assert keep not in s3.FORMAT_WORDS
+
+
+def test_main_drops_words_and_records_them_in_meta(tmp_path, monkeypatch):
+    kp = tmp_path / "kp.jsonl"
+    write_lines(kp, [json.dumps({"activity_id": "1",
+                                 "keyphrases": ["rag interview questions", "vector db", "chunking"]}),
+                     json.dumps({"activity_id": "2",
+                                 "keyphrases": ["free ai course", "llm basics", "agents"]})])
+    seen = {}
+
+    def fake_embed(texts, model, url):
+        seen["texts"] = texts
+        return np.ones((len(texts), 4), dtype=np.float32)
+
+    monkeypatch.setattr(s3, "embed_batch", fake_embed)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["step3", str(kp), "--drop-format-words",
+                                     "--drop-words", "basics", "--out-prefix", "emb_subject"])
+    s3.main()
+
+    assert seen["texts"][0] == "clustering: rag, vector db, chunking"
+    assert seen["texts"][1] == "clustering: ai, llm, agents"
+    meta = json.loads((tmp_path / "emb_subject_meta.json").read_text(encoding="utf-8"))
+    assert "interview" in meta["dropped_words"] and "basics" in meta["dropped_words"]
+    assert (tmp_path / "emb_subject.npy").exists()
+    assert not (tmp_path / "embeddings.npy").exists()     # the original files stay untouched
+
+
+def test_clean_phrases_is_what_build_text_embeds():
+    pattern = s3.make_drop_pattern(["interview"])
+    phrases = ["rag interview questions", "2026 trends", "interview"]
+    assert s3.build_text(phrases, pattern) == s3.TASK_PREFIX + ", ".join(
+        s3.clean_phrases(phrases, pattern))
+    assert s3.clean_phrases(phrases, pattern) == ["rag questions", "trends"]

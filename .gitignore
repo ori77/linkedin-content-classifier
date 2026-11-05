@@ -12,12 +12,16 @@ __pycache__/
 dist/
 build/
 
-# JSONL outputs
+# Step 2 output
 *.jsonl
 
 # Step 3 outputs
 embeddings*.npy
 embeddings*_meta.json
+
+# Step 4 outputs
+clusters*.csv
+clusters*_report.md
 
 # Virtual environments
 .venv/
