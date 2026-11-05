@@ -15,6 +15,10 @@ build/
 # JSONL outputs
 *.jsonl
 
+# Step 3 outputs
+embeddings*.npy
+embeddings*_meta.json
+
 # Virtual environments
 .venv/
 venv/
