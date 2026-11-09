@@ -1,0 +1,617 @@
+version: v1
+created: '2026-11-09'
+based_on: taxonomy_gemma.draft.yaml
+topics:
+- id: retrieval-augmented-generation
+  name: Retrieval-Augmented Generation
+  description: This topic covers the design, implementation, optimization, and evaluation of Retrieval-Augmented
+    Generation (RAG) systems, from architecture to practical engineering considerations.
+  post_count: 110
+  subtopics:
+  - id: retrieval-augmented-generation.genai-system-design
+    name: GenAI System Design
+    description: Posts in this cluster focus on designing and implementing robust generative AI systems,
+      including retrieval-augmented generation, vector databases, and hallucination mitigation strategies.
+    clusters:
+    - 2
+    post_count: 27
+    keywords:
+    - genai
+    - hallucination
+    - pipeline
+    - rag
+    - security
+    - enterprise
+  - id: retrieval-augmented-generation.rag-system-engineering
+    name: RAG System Engineering
+    description: Posts in this cluster focus on designing, implementing, and optimizing Retrieval-Augmented
+      Generation systems for production environments.
+    clusters:
+    - 27
+    post_count: 21
+    keywords:
+    - system
+    - rag
+    - production
+    - evaluation
+    - design
+    - context
+  - id: retrieval-augmented-generation.retrieval-augmented-generation-systems
+    name: Retrieval-Augmented Generation Systems
+    description: Posts in this cluster focus on designing and implementing systems that combine retrieval
+      mechanisms with large language models to enhance generation quality and context relevance.
+    clusters:
+    - 7
+    post_count: 18
+    keywords:
+    - rag
+    - rags
+    - retrieval
+    - hybrid
+    - vector
+    - chunking
+  - id: retrieval-augmented-generation.rag-system-evaluation
+    name: RAG System Evaluation
+    description: Posts in this cluster focus on assessing and improving the performance, reliability,
+      and quality of Retrieval-Augmented Generation systems.
+    clusters:
+    - 6
+    post_count: 15
+    keywords:
+    - retrieval
+    - metrics
+    - system
+    - rag
+    - quality
+    - failure
+  - id: retrieval-augmented-generation.retrieval-systems-design
+    name: Retrieval Systems Design
+    description: Posts in this cluster focus on designing and implementing retrieval systems, including
+      vector databases, semantic search, and integration with AI frameworks.
+    clusters:
+    - 24
+    post_count: 15
+    keywords:
+    - vector
+    - database
+    - search
+    - retrieval
+    - graph
+    - integration
+  - id: retrieval-augmented-generation.document-processing-systems
+    name: Document Processing Systems
+    description: Posts in this cluster focus on designing and optimizing systems for document ingestion,
+      parsing, and processing, including techniques for handling PDFs, OCR, and event-driven workflows.
+    clusters:
+    - 22
+    post_count: 8
+    keywords:
+    - document
+    - pdf
+    - parsing
+    - ocr
+    - processing
+    - ingestion
+  - id: retrieval-augmented-generation.rag-system-optimization
+    name: RAG System Optimization
+    description: Posts in this cluster focus on improving the efficiency and reliability of Retrieval-Augmented
+      Generation systems through techniques like cache invalidation, document versioning, and chunking
+      strategies.
+    clusters:
+    - 23
+    post_count: 6
+    keywords:
+    - versioning
+    - invalidation
+    - document
+    - cache
+    - chunking
+    - tracking
+- id: large-language-model-architecture
+  name: Large Language Model Architecture
+  description: This topic focuses on the technical aspects of building, training, and optimizing large
+    language models, including transformer architecture, attention mechanisms, tokenization, and finetuning
+    techniques.
+  post_count: 105
+  subtopics:
+  - id: large-language-model-architecture.llm-inference-optimization
+    name: LLM Inference Optimization
+    description: Posts in this cluster focus on improving the efficiency, speed, and cost-effectiveness
+      of large language model inference processes.
+    clusters:
+    - 12
+    post_count: 41
+    keywords:
+    - inference
+    - optimization
+    - llm
+    - gpu
+    - kv
+    - model
+  - id: large-language-model-architecture.llm-architecture-and-training
+    name: LLM Architecture and Training
+    description: Posts in this cluster focus on the technical aspects of building, training, and optimizing
+      large language models, including transformer architecture, attention mechanisms, tokenization, and
+      finetuning techniques.
+    clusters:
+    - 13
+    post_count: 20
+    keywords:
+    - attention
+    - mechanism
+    - transformer
+    - finetuning
+    - llm
+    - block
+  - id: large-language-model-architecture.parameter-efficient-fine-tuning
+    name: Parameter Efficient Fine-Tuning
+    description: Posts in this cluster focus on techniques to fine-tune large models with minimal parameter
+      updates, emphasizing efficiency and adaptability.
+    clusters:
+    - 8
+    post_count: 14
+    keywords:
+    - fine
+    - gradient
+    - tuning
+    - lora
+    - parameter
+    - rank
+  - id: large-language-model-architecture.transformer-architecture-and-training
+    name: Transformer Architecture and Training
+    description: Posts in this cluster focus on the design, implementation, and training of transformer-based
+      models, including related concepts like reinforcement learning, adversarial networks, and language
+      model development.
+    clusters:
+    - 5
+    post_count: 12
+    keywords:
+    - transformer
+    - transformers
+    - training
+    - architecture
+    - adversarial
+    - fundamentals
+  - id: large-language-model-architecture.large-language-models
+    name: Large Language Models
+    description: Posts in this cluster focus on the design, training, and application of large language
+      models, including their architecture, training techniques, and integration with natural language
+      processing.
+    clusters:
+    - 30
+    post_count: 12
+    keywords:
+    - language
+    - models
+    - llms
+    - large
+    - chatgpt
+    - nlp
+  - id: large-language-model-architecture.llm-tokenization-and-pipeline
+    name: LLM Tokenization and Pipeline
+    description: Posts in this cluster focus on the technical aspects of large language model tokenization,
+      pipeline design, and related machine learning concepts.
+    clusters:
+    - 31
+    post_count: 6
+    keywords:
+    - tokenization
+    - pipeline
+    - lru
+    - subword
+    - llm
+    - python
+- id: ai-agent-development
+  name: AI Agent Development
+  description: This topic focuses on the design, building, and implementation of AI agents and multi-agent
+    systems, including architecture, integration with LLMs, tool usage, and system orchestration.
+  post_count: 102
+  subtopics:
+  - id: ai-agent-development.agentic-ai-systems
+    name: Agentic AI Systems
+    description: Posts in this cluster focus on designing, building, and managing AI agents and multi-agent
+      systems, including architecture, integration with LLMs, tool usage, and system orchestration.
+    clusters:
+    - 18
+    post_count: 54
+    keywords:
+    - agent
+    - agents
+    - multi
+    - agentic
+    - mcp
+    - integration
+  - id: ai-agent-development.ai-workflow-engineering
+    name: AI Workflow Engineering
+    description: Posts in this cluster focus on designing, implementing, and optimizing AI workflows with
+      an emphasis on automation, tool integration, and structured output generation.
+    clusters:
+    - 17
+    post_count: 34
+    keywords:
+    - workflow
+    - automation
+    - claude
+    - code
+    - tool
+    - ai
+  - id: ai-agent-development.ai-agent-development
+    name: AI Agent Development
+    description: Posts in this cluster focus on designing, building, and implementing AI agents, including
+      their integration with LLMs, RAG systems, and practical application in real-world scenarios.
+    clusters:
+    - 32
+    post_count: 14
+    keywords:
+    - llm
+    - gen
+    - rag
+    - ml
+    - ai
+    - beginners
+- id: ai-engineering-practices
+  name: AI Engineering Practices
+  description: This topic covers the practical implementation and development of AI systems, including
+    code generation, system design, deployment, and integration with tools like LangChain and OpenAI.
+  post_count: 77
+  subtopics:
+  - id: ai-engineering-practices.ai-engineering-practices-code-coding
+    name: AI Engineering Practices (code, coding)
+    description: Posts in this cluster focus on the practical implementation and development of AI systems,
+      including code generation, system design, deployment, and real-world problem solving.
+    clusters:
+    - 20
+    post_count: 28
+    keywords:
+    - code
+    - engineering
+    - ai
+    - coding
+    - review
+    - generated
+  - id: ai-engineering-practices.ai-system-design-engineering-serving
+    name: AI System Design (engineering, serving)
+    description: Posts in this cluster focus on designing and building production-ready AI systems, including
+      system architecture, deployment challenges, and integration with real-world applications.
+    clusters:
+    - 4
+    post_count: 17
+    keywords:
+    - engineering
+    - serving
+    - production
+    - demo
+    - design
+    - system
+  - id: ai-engineering-practices.ai-engineering-practices-langchain-engineer
+    name: AI Engineering Practices (langchain, engineer)
+    description: Posts in this cluster focus on the practical implementation and design of AI systems,
+      including tools like LangChain and LangGraph, and cover topics such as RAG, agent design, and production-grade
+      AI development.
+    clusters:
+    - 29
+    post_count: 10
+    keywords:
+    - langchain
+    - engineer
+    - langgraph
+    - youtube
+    - output
+    - structured
+  - id: ai-engineering-practices.ai-system-design-operations-blogs
+    name: AI System Design (operations, blogs)
+    description: Posts focused on designing and deploying large-scale AI systems, including architecture,
+      infrastructure, and operational practices.
+    clusters:
+    - 25
+    post_count: 8
+    keywords:
+    - design
+    - operations
+    - blogs
+    - scale
+    - deployment
+    - cloud
+  - id: ai-engineering-practices.ai-reasoning-engineering
+    name: AI Reasoning Engineering
+    description: Posts in this cluster focus on the design and implementation of reasoning mechanisms
+      in AI systems, including decision-making, pattern recognition, and system iteration.
+    clusters:
+    - 28
+    post_count: 7
+    keywords:
+    - reasoning
+    - thinking
+    - consequences
+    - chain
+    - making
+    - engineering
+  - id: ai-engineering-practices.ai-engineering-practices-openai-coding
+    name: AI Engineering Practices (openai, coding)
+    description: Posts in this cluster focus on the technical and practical aspects of building and deploying
+      AI systems, including coding, neural networks, and integration with tools like OpenAI.
+    clusters:
+    - 34
+    post_count: 7
+    keywords:
+    - openai
+    - coding
+    - neural
+    - explanation
+    - recruiting
+    - acquisition
+- id: career-development
+  name: Career Development
+  description: This topic focuses on strategies for advancing one's career, including salary growth, job
+    search techniques, remote work opportunities, negotiation tactics, and navigating career challenges
+    in the tech industry.
+  post_count: 66
+  subtopics:
+  - id: career-development.career-development
+    name: Career Development
+    description: Posts in this cluster focus on strategies for advancing one's career, including salary
+      growth, job search techniques, remote work opportunities, and negotiation tactics.
+    clusters:
+    - 3
+    post_count: 37
+    keywords:
+    - career
+    - job
+    - salary
+    - growth
+    - work
+    - remote
+  - id: career-development.ai-engineering-careers
+    name: AI Engineering Careers
+    description: Posts in this cluster focus on career paths, roles, and skill development for professionals
+      working with AI and machine learning in engineering contexts.
+    clusters:
+    - 19
+    post_count: 22
+    keywords:
+    - engineer
+    - hiring
+    - skills
+    - ai
+    - roles
+    - role
+  - id: career-development.career-resilience-in-tech
+    name: Career Resilience in Tech
+    description: Posts in this cluster focus on navigating career challenges in the tech industry, including
+      layoffs, resume optimization, and strategies for career growth and adaptation.
+    clusters:
+    - 26
+    post_count: 7
+    keywords:
+    - layoffs
+    - software
+    - career
+    - resume
+    - judgment
+    - engineering
+- id: ai-fundamentals
+  name: AI Fundamentals
+  description: Foundational concepts in machine learning, deep learning, neural networks and reinforcement
+    learning, plus the Python tooling and core AI engineering skills used to practise them.
+  post_count: 39
+  subtopics:
+  - id: ai-fundamentals.machine-learning-fundamentals
+    name: Machine Learning Fundamentals
+    description: Posts in this cluster focus on foundational concepts in machine learning, including deep
+      learning, neural networks, and reinforcement learning, often through books, courses, and practical
+      applications.
+    clusters:
+    - 14
+    post_count: 20
+    keywords:
+    - learning
+    - deep
+    - neural
+    - books
+    - machine
+    - basics
+  - id: ai-fundamentals.ai-engineering-fundamentals
+    name: AI Engineering Fundamentals
+    description: Posts in this cluster focus on the core concepts and practical implementation of AI and
+      machine learning, including deep learning, project-based learning, and foundational skills.
+    clusters:
+    - 15
+    post_count: 12
+    keywords:
+    - learning
+    - machine
+    - deep
+    - implementations
+    - ai
+    - fundamentals
+  - id: ai-fundamentals.python-for-ai-and-ml
+    name: Python for AI and ML
+    description: Posts in this cluster focus on using Python to implement machine learning models, work
+      with AI tools, and manage data pipelines.
+    clusters:
+    - 36
+    post_count: 7
+    keywords:
+    - python
+    - libraries
+    - ml
+    - tools
+    - sklearn
+    - expressions
+- id: model-optimization-and-generalization
+  name: Model Optimization and Generalization
+  description: This topic focuses on improving model performance, efficiency, and ability to generalize
+    from training data to unseen data, covering topics like regularization, feature selection, and evaluation
+    metrics.
+  post_count: 26
+  subtopics:
+  - id: model-optimization-and-generalization.model-generalization
+    name: Model Generalization
+    description: Posts in this cluster focus on improving a model's ability to generalize from training
+      data to unseen data, covering topics like overfitting, regularization, feature selection, and evaluation
+      metrics.
+    clusters:
+    - 9
+    post_count: 26
+    keywords:
+    - feature
+    - overfitting
+    - regularization
+    - bias
+    - model
+    - generalization
+- id: data-science-and-data-engineering
+  name: Data Science and Data Engineering
+  description: 'Practical data science and data engineering skills: SQL, Python, analytics, data platforms
+    and case-study style practice that supports AI and ML work.'
+  post_count: 25
+  subtopics:
+  - id: data-science-and-data-engineering.data-science-practice
+    name: Data Science Practice
+    description: Posts in this cluster focus on practical skills and case studies related to data science,
+      including SQL, Python, and system design challenges.
+    clusters:
+    - 1
+    post_count: 25
+    keywords:
+    - sql
+    - data
+    - science
+    - analyst
+    - databricks
+    - practice
+- id: ai-tools-and-learning-resources
+  name: AI Tools and Learning Resources
+  description: Practical AI tools and automations, open-source repositories, and courses, certifications
+    and learning resources for working with AI.
+  post_count: 25
+  subtopics:
+  - id: ai-tools-and-learning-resources.ai-in-healthcare-education
+    name: AI in Healthcare Education
+    description: Posts in this cluster focus on the application of AI in healthcare settings and the educational
+      resources available for learning AI with a healthcare emphasis.
+    clusters:
+    - 16
+    post_count: 12
+    keywords:
+    - healthcare
+    - education
+    - certification
+    - health
+    - nvidia
+    - academy
+  - id: ai-tools-and-learning-resources.ai-automation-tools
+    name: AI Automation Tools
+    description: Posts in this cluster focus on AI-powered tools that automate tasks such as resume building,
+      email management, note-taking, and job search processes.
+    clusters:
+    - 33
+    post_count: 7
+    keywords:
+    - generator
+    - automation
+    - job
+    - tool
+    - tools
+    - resume
+  - id: ai-tools-and-learning-resources.open-source-ai-repositories-and-tools
+    name: Open-Source AI Repositories and Tools
+    description: Posts in this cluster focus on practical aspects of building and deploying AI systems,
+      including tooling, workflows, and open-source resources.
+    clusters:
+    - 35
+    post_count: 6
+    keywords:
+    - github
+    - repositories
+    - open
+    - source
+    - agents
+    - launch
+- id: machine-learning-engineering
+  name: Machine Learning Engineering
+  description: This topic covers the practical aspects of deploying and maintaining machine learning models
+    in production environments, including system design, architecture, and operational practices.
+  post_count: 20
+  subtopics:
+  - id: machine-learning-engineering.ml-production-practices
+    name: ML Production Practices
+    description: Posts in this cluster focus on the practical aspects of deploying and maintaining machine
+      learning models in production environments.
+    clusters:
+    - 11
+    post_count: 20
+    keywords:
+    - ml
+    - deployment
+    - model
+    - mlops
+    - data
+    - science
+- id: data-structures-and-algorithms
+  name: Data Structures and Algorithms
+  description: This topic focuses on mastering data structures and algorithms through problem-solving,
+    pattern recognition, and preparation for technical interviews and software engineering roles.
+  post_count: 13
+  subtopics:
+  - id: data-structures-and-algorithms.data-structures-mastery
+    name: Data Structures Mastery
+    description: Posts focused on mastering data structures and algorithms through problem-solving, pattern
+      recognition, and preparation for technical interviews and software engineering roles.
+    clusters:
+    - 0
+    post_count: 13
+    keywords:
+    - dsa
+    - leetcode
+    - problem
+    - pattern
+    - coding
+    - structures
+- id: generative-ai-systems
+  name: Generative AI Systems
+  description: This topic covers the development, evaluation, and application of generative AI systems,
+    including large language models, AI agents, and related technologies, encompassing both design and
+    implementation aspects.
+  post_count: 12
+  subtopics:
+  - id: generative-ai-systems.generative-ai-systems
+    name: Generative AI Systems
+    description: Posts in this cluster focus on the development, evaluation, and application of generative
+      AI systems, including large language models, AI agents, and related technologies.
+    clusters:
+    - 10
+    post_count: 12
+    keywords:
+    - generative
+    - llms
+    - rlhf
+    - rl
+    - ai
+    - agents
+- id: software-engineering-practices
+  name: Software Engineering Practices
+  description: This topic focuses on the principles and techniques for designing and building software
+    systems, including architecture, best practices, and learning through hands-on projects.
+  post_count: 10
+  subtopics:
+  - id: software-engineering-practices.software-design-practices
+    name: Software Design Practices
+    description: Posts in this cluster focus on the principles and techniques for designing and building
+      software systems, including architecture, best practices, and learning through hands-on projects.
+    clusters:
+    - 21
+    post_count: 10
+    keywords:
+    - software
+    - freecodecamp
+    - doing
+    - build
+    - practices
+    - design
+other:
+  id: other.general
+  name: Other / General
+  description: Posts that fit no topic clearly.
+  post_count: 43
+  clusters: []
