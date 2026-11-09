@@ -23,6 +23,10 @@ embeddings*_meta.json
 clusters*.csv
 clusters*_report.md
 
+# Step 5 outputs
+pipeline/taxonomy/*
+!pipeline/taxonomy/taxonomy.v1.yaml
+
 # Virtual environments
 .venv/
 venv/

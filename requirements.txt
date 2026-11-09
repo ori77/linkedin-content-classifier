@@ -3,6 +3,7 @@ requests
 numpy
 umap-learn
 scikit-learn
+pyyaml
 
 
 # tests
