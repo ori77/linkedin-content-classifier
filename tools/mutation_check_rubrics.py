@@ -48,6 +48,13 @@ MUTATIONS = [
     ("stated_units: zero minutes accepted", "elif not _is_num(per) or per <= 0:", "elif not _is_num(per) or per < 0:"),
     ("stated_units: unconvertible unit may have minutes", "if per is not None:", "if False:"),
     ("stated_units: empty description accepted", 'if not _is_text(item.get("describe")):', "if False:"),
+    ("guidance: any value accepted", 'if "difficulty_guidance" in data and not _is_text(data["difficulty_guidance"]):', 'if False:'),
+    ("guidance: required instead of optional", 'if "difficulty_guidance" in data and not', 'if not'),
+    ("brief: not-a-number accepted", 'if not _is_num(brief):', 'if False:'),
+    ("brief: no lower bound", 'not hw["min"] <= brief <= tw["min"]', 'not brief <= tw["min"]'),
+    ("brief: no upper bound", 'not hw["min"] <= brief <= tw["min"]', 'not hw["min"] <= brief'),
+    ("brief: required instead of optional", 'if brief is not None:', 'if True:'),
+    ("default path: back to v1", 'rubrics" / "rubrics.v2.yaml"', 'rubrics" / "rubrics.v1.yaml"'),
     ("load: never raise on problems", "    if problems or data is None or sha is None:     # the None checks only help the type checker\n        raise RubricsError", "    if False:\n        raise RubricsError"),
     ("cli: always exit 0", "            print(f\"  - {p}\")\n        return 1", "            print(f\"  - {p}\")\n        return 0"),
 ]

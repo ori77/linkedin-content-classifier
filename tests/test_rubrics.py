@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 
 import rubrics as R  # noqa: E402
 
-RUBRICS_FILE = ROOT / "rubrics" / "rubrics.v1.yaml"
+RUBRICS_FILE = ROOT / "rubrics" / "rubrics.v2.yaml"      # the default since Step 10
+RUBRICS_V1 = ROOT / "rubrics" / "rubrics.v1.yaml"        # kept unchanged: the first gold-set run used it
 SCRIPT = ROOT / "pipeline" / "rubrics.py"
 
 
@@ -43,7 +44,7 @@ def test_real_file_has_no_problems(good):
 
 def test_load_rubrics_returns_data_and_sha():
     rub = R.load_rubrics(RUBRICS_FILE)
-    assert rub.version == "v1"
+    assert rub.version == "v2"
     assert len(rub.sha) == 64
 
 
@@ -522,3 +523,76 @@ def test_cli_exit_1_on_missing_file(tmp_path):
     r = run_cli(str(tmp_path / "nope.yaml"))
     assert r.returncode == 1
     assert "cannot read" in r.stdout
+
+
+# ------------------------------------------------------------ v2 (Step 10): what changed, and v1 left alone
+
+def test_v1_file_is_unchanged_and_still_valid():
+    """Results exist for v1, so its bytes must never change (its fingerprint is in the stored records)."""
+    rub = R.load_rubrics(RUBRICS_V1)
+    assert rub.version == "v1"
+    assert rub.sha.startswith("a0eea6326272")
+    assert "difficulty_guidance" not in rub.data and "brief_words_below" not in rub.data["summary"]
+    assert rub.data["summary"]["hard_words"]["min"] == 40
+
+
+def test_v2_differs_from_v1_only_where_intended():
+    v1, v2 = (yaml.safe_load(f.read_text(encoding="utf-8")) for f in (RUBRICS_V1, RUBRICS_FILE))
+    assert v2["version"] == "v2" and R.load_rubrics(RUBRICS_FILE).sha != R.load_rubrics(RUBRICS_V1).sha
+    for key in ("role_profile", "judging_basis", "difficulty", "alignment", "alignment_bands", "time"):
+        assert v1[key] == v2[key], key                       # untouched sections
+    assert [c["id"] for c in v1["content_type"]] == [c["id"] for c in v2["content_type"]]
+    changed = [c["id"] for a, c in zip(v1["content_type"], v2["content_type"]) if a != c]
+    assert changed == ["interview_question_set"]
+    assert v1["summary"]["target_words"] == v2["summary"]["target_words"]
+
+
+def test_v2_interview_rule_covers_a_single_question():
+    rule = " ".join(next(c for c in yaml.safe_load(RUBRICS_FILE.read_text(encoding="utf-8"))["content_type"]
+                         if c["id"] == "interview_question_set")["rule"].split())
+    assert "one or more interview questions" in rule
+    assert "single question" in rule and "question of the day" in rule
+    assert "General interview or career advice without actual questions is not this type" in rule
+
+
+def test_v2_summary_limits(good):
+    assert good["summary"]["hard_words"] == {"min": 30, "max": 220}
+    assert good["summary"]["brief_words_below"] == 40
+
+
+def test_v2_has_difficulty_guidance(good):
+    assert "beginner only when the content needs no prior AI or ML knowledge" in " ".join(good["difficulty_guidance"].split())
+
+
+@pytest.mark.parametrize("bad", ["", "   ", 5, None])
+def test_difficulty_guidance_must_be_text_when_present(good, bad):
+    good["difficulty_guidance"] = bad
+    assert problems_with(good, "difficulty_guidance")
+
+
+def test_difficulty_guidance_is_optional(good):
+    del good["difficulty_guidance"]
+    assert R.validate_rubrics(good) == []
+
+
+@pytest.mark.parametrize("value", ["forty", True])
+def test_brief_words_below_must_be_a_number(good, value):
+    good["summary"]["brief_words_below"] = value
+    assert problems_with(good, "brief_words_below must be a number")
+
+
+@pytest.mark.parametrize("value", [29, 61])
+def test_brief_words_below_must_sit_between_hard_min_and_target_min(good, value):
+    good["summary"]["brief_words_below"] = value             # hard.min is 30, target.min is 60
+    assert problems_with(good, "brief_words_below must be between")
+
+
+@pytest.mark.parametrize("value", [30, 40, 60])
+def test_brief_words_below_edges_are_allowed(good, value):
+    good["summary"]["brief_words_below"] = value
+    assert R.validate_rubrics(good) == []
+
+
+def test_brief_words_below_is_optional(good):
+    del good["summary"]["brief_words_below"]
+    assert R.validate_rubrics(good) == []

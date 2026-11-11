@@ -6,7 +6,7 @@ reads that file, checks it is consistent, and gives it a fingerprint (a hash). T
 fingerprint goes into the cache key, so changing a rule means old answers are not reused.
 
 Run from the command line to check a file:
-    python rubrics.py                      (checks rubrics/rubrics.v1.yaml)
+    python rubrics.py                      (checks rubrics/rubrics.v2.yaml)
     python rubrics.py path/to/other.yaml
 Exit status 0 = fine, 1 = problems (all problems are printed together).
 """
@@ -33,7 +33,8 @@ STATED_UNIT_IDS = ["minutes", "hours", "weeks", "questions", "other", "none"]
 UNCONVERTIBLE_UNIT_IDS = ["other", "none"]       # no minutes_per_unit allowed for these
 CATCH_ALL = "miscellaneous"          # must be the last content-type rule
 
-DEFAULT_PATH = Path(__file__).resolve().parents[1] / "rubrics" / "rubrics.v1.yaml"
+# v2 since Step 10. v1 stays on disk unchanged (its results exist) and still loads: pass its path.
+DEFAULT_PATH = Path(__file__).resolve().parents[1] / "rubrics" / "rubrics.v2.yaml"
 
 
 class RubricsError(Exception):
@@ -119,6 +120,7 @@ def validate_rubrics(data: Any) -> list[str]:
             problems.append(f"'{key}' must be a non-empty text")
 
     _check_difficulty(data, problems)
+    _check_difficulty_guidance(data, problems)
     _check_content_type(data, problems)
     _check_alignment(data, problems)
     _check_bands(data, problems)
@@ -138,6 +140,12 @@ def _check_difficulty(data: dict, problems: list[str]) -> None:
             for field in ("definition", "example"):
                 if not _is_text(item.get(field)):
                     problems.append(f"difficulty '{item.get('id')}': '{field}' is empty")
+
+
+def _check_difficulty_guidance(data: dict, problems: list[str]) -> None:
+    """Optional (new in v2): extra advice on how to judge difficulty. v1 has none."""
+    if "difficulty_guidance" in data and not _is_text(data["difficulty_guidance"]):
+        problems.append("'difficulty_guidance' must be a non-empty text when present")
 
 
 def _check_content_type(data: dict, problems: list[str]) -> None:
@@ -359,6 +367,12 @@ def _check_summary(data: dict, problems: list[str]) -> None:
         problems.append("summary.target_words and summary.hard_words need numbers 'min' and 'max'")
     elif not (0 < hw["min"] <= tw["min"] < tw["max"] <= hw["max"]):
         problems.append("summary: need 0 < hard.min <= target.min < target.max <= hard.max")
+    brief = s.get("brief_words_below")        # optional (new in v2): 30 to 39 words is accepted but flagged
+    if brief is not None:
+        if not _is_num(brief):
+            problems.append("summary.brief_words_below must be a number")
+        elif ok and not hw["min"] <= brief <= tw["min"]:
+            problems.append("summary: brief_words_below must be between hard.min and target.min")
     if not isinstance(s.get("single_paragraph"), bool):
         problems.append("summary.single_paragraph must be true or false")
     for key in ("must_cover", "motives"):
