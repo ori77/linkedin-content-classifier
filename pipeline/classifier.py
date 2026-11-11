@@ -27,7 +27,7 @@ from ollama_json import OLLAMA_URL, LLMError, OllamaUnavailable, chat_json
 from rubrics import (ALIGNMENT_IDS, BASIS_IDS, CONTENT_TYPE_IDS, DIFFICULTY_IDS, STATED_UNIT_IDS,
                      Rubrics)
 
-PROMPT_VERSION = "classify-2026.11.2"       # a human label; the real guard is prompt_sha below
+PROMPT_VERSION = "classify-2026.11.3"       # a human label; the real guard is prompt_sha below
 
 # Confidence (LLD 9.5, reworked: there is no embedding shortlist, so the "agreement" part compares
 # the model's subtopic with the one clustering gave the post). Starting values, to be calibrated
@@ -42,6 +42,7 @@ CONFIDENCE = {
 PENALISED_WARNINGS = {"full_project_short_understand", "news_hard", "stated_size_not_in_post",
                       "summary_short", "summary_missing"}
 
+_INTERVIEW = re.compile(r"\binterview", re.IGNORECASE)    # also matches interviews, interviewer
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 _CUT_OFF = re.compile(r"(…|\.\.\.)\s*(see more|more)\s*$", re.IGNORECASE)
 _BULLET_START = re.compile(r"^\s*(?:[•·▪◦‣\-*–—]|\d+[.)])\s+", re.MULTILINE)
@@ -154,9 +155,13 @@ def system_prompt_b(rubrics: Rubrics) -> str:
         + "\n".join(f"  * {u['id']}: {u['describe']}" for u in t["stated_units"]) + "\n"
         "- basis, one of:\n" + "\n".join(f"  * {b['id']}: {' '.join(b['rule'].split())}" for b in t["basis"]) + "\n",
         "CONTENT TYPE (use the FIRST rule that applies, from top to bottom)\n"
+        "Check the rules in order, starting with the first, and stop at the first one the post fits. "
+        "Do not skip an earlier rule because the post also looks like a later one: for example a post "
+        "that asks an interview question and then explains the answer is an interview type, not a tutorial.\n"
         + "\n".join(f"- {c['id']}: {' '.join(c['rule'].split())}" for c in r["content_type"]) + "\n",
-        "DIFFICULTY\n" + "\n".join(f"- {d['id']}: {d['definition']} For example: {d['example']}"
-                                   for d in r["difficulty"]) + "\n",
+        "DIFFICULTY\n" + (" ".join(r["difficulty_guidance"].split()) + "\n" if r.get("difficulty_guidance") else "")
+        + "\n".join(f"- {d['id']}: {d['definition']} For example: {d['example']}"
+                    for d in r["difficulty"]) + "\n",
         "TIME (whole minutes)\n"
         "- cover_minutes: time to go through the whole resource once (read, watch, work through; "
         "run the code if it is a tutorial or project).\n"
@@ -374,10 +379,15 @@ def coherence_warnings(*, content_type: str, difficulty: str, time: dict, stated
         if size_numbers and any(n not in post_numbers for n in size_numbers):
             w.append("stated_size_not_in_post")
     n = len(summary.split())
+    s = rub.data["summary"]
     if n == 0:
         w.append("summary_missing")
-    elif n < rub.data["summary"]["hard_words"]["min"]:
+    elif n < s["hard_words"]["min"]:
         w.append("summary_short")
+    elif n < s.get("brief_words_below", 0):            # v2 only: accepted, but shorter than the aim
+        w.append("summary_brief")
+    if content_type != "interview_question_set" and _INTERVIEW.search(post_text):
+        w.append("interview_mentioned")                # a prompt for a human glance; never lowers confidence
     return w
 
 

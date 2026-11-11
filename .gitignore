@@ -12,7 +12,7 @@ __pycache__/
 dist/
 build/
 
-# Step 2 output
+# Step 2 and other JSONL output
 *.jsonl
 
 # Step 3 outputs
@@ -26,6 +26,9 @@ clusters*_report.md
 # Step 5 outputs
 pipeline/taxonomy/*
 !pipeline/taxonomy/taxonomy.v1.yaml
+
+# Step 10 outputs
+gold/
 
 # Virtual environments
 .venv/

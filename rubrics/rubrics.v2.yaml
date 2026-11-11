@@ -1,0 +1,185 @@
+# Rubrics v2 for the 7-lens classifier (lenses 3 to 6, plus the summary rule).
+# Versioned like the taxonomy: change = new file (rubrics.v3.yaml), never an edit of v2
+# once classification results exist. v1 is kept unchanged because the first gold-set run used it.
+#
+# What changed from v1 (Step 10, after the first comparison on the gold set):
+#   1. content_type interview_question_set: the rule now says "one or more interview questions",
+#      so a single question-with-answer post counts (v1 said "a set", and the model never used it).
+#   2. NEW difficulty_guidance: how to judge difficulty (v1 let the model call almost anything beginner).
+#   3. summary.hard_words.min 40 -> 30 and NEW summary.brief_words_below 40: a summary of 30 to 39 words
+#      is accepted without a retry and only flagged (warning "summary_brief"). In the first run 15 of 30
+#      posts were re-asked because of this, which cost time and changed nothing important.
+#
+# The rest of the file is identical to v1. The loader (pipeline/rubrics.py) validates this file
+# and hashes it; the hash goes into the cache key (LLD 9.6).
+#
+# Numbers marked "LLD" are copied from LLD-part-1 section 8 and LLD-part-2 section 9.
+# Numbers marked "ASSUMPTION" are ours and must be calibrated on the gold set (Step 10).
+
+version: v2
+role_profile: "AI Engineer: builds, evaluates and ships LLM-powered applications"
+
+# What the classifier judges (decision of 2026-11-09, differs from the LLD, which merges a
+# fetched linked article into the item). We never fetch linked pages.
+judging_basis: >
+  Judge the resource the post advertises, using only what the post itself states
+  (for example "8-week course", "30 interview questions", "5-hour video", a described build).
+  If the post states nothing about a resource, judge the post as written. Never invent a
+  duration, a size or a course length that the post does not give.
+
+difficulty:                     # LLD section 8; examples adapted to saved-post topics
+  - id: beginner
+    definition: No prior AI or ML knowledge needed; explains basic terms.
+    example: "What is an embedding? Explained simply"
+  - id: intermediate
+    definition: Assumes Python and basic LLM API usage; introduces one new technique.
+    example: "Build a RAG chatbot with a vector database"
+  - id: advanced
+    definition: Assumes working knowledge of LLM systems; trade-offs, internals, optimisation.
+    example: "Tuning chunking, hybrid search and re-rankers for recall and latency"
+  - id: expert
+    definition: Research-level or deep systems content; papers, maths, novel architectures.
+    example: "Deriving the DPO loss; speculative decoding internals"
+
+difficulty_guidance: >
+  Judge difficulty by what a reader must already know to follow the content, using the concepts
+  and terms the post itself uses. Do not choose beginner just because the tone is friendly, the
+  post is short or the post is an advertisement: choose beginner only when the content needs no
+  prior AI or ML knowledge. Technical terms used without explanation (for example optimizer,
+  attention, embeddings, RAG, evaluation metrics, GPU kernels) mean at least intermediate.
+
+content_type:                   # order = priority: the FIRST rule that applies wins (LLD)
+  - id: interview_question_set
+    rule: >
+      The post is, or advertises, one or more interview questions (with or without answers)
+      for interview preparation: a single question with its answer, a "question of the day",
+      a list or series of questions, or the questions someone was asked in a real interview.
+      For example "50 LLM interview questions" or "ML interview question of the day".
+      General interview or career advice without actual questions is not this type.
+  - id: full_project
+    rule: >
+      An end-to-end build of a working system with several components and deployment or
+      evaluation, typically more than 3 hours to reproduce. Includes a post that describes
+      or advertises such a build.
+  - id: mini_project
+    rule: >
+      A small, complete, buildable thing (one script, notebook or app) that can be
+      reproduced in under 3 hours. Includes a post that describes or advertises one.
+  - id: tutorial
+    rule: >
+      Teaches a concept or technique step by step (may include code), or advertises a
+      course, guide or walkthrough that does, without a finished product as its goal.
+  - id: news
+    rule: >
+      Announces or reports a release, funding, paper, policy or event; time-sensitive.
+  - id: miscellaneous            # ASSUMPTION: roadmaps and study plans are listed here
+    rule: >
+      Everything else: opinions, career stories, motivation, memes, plain lists of links,
+      and learning roadmaps or study plans that do not themselves teach step by step.
+
+alignment:                      # LLD section 8 and 9.4; weights sum to 1
+  - id: applicability
+    weight: 0.30
+    question: Can an AI Engineer directly apply this when building LLM apps?
+    high: directly usable pattern or code
+    low: unrelated to building AI systems
+  - id: technical_depth
+    weight: 0.20
+    question: How substantive is the technical content?
+    high: deep, precise, non-trivial
+    low: fluff or buzzwords
+  - id: hands_on
+    weight: 0.20
+    question: Is there something to build or run?
+    high: complete runnable code or project
+    low: no practical element
+  - id: currency
+    weight: 0.10
+    question: Is it current with modern tools and practices?
+    high: state of the art, still relevant
+    low: obsolete
+  - id: career_value
+    weight: 0.10
+    question: Does it help with interviews, portfolio or positioning?
+    high: directly
+    low: not at all
+  - id: production_relevance
+    weight: 0.10
+    question: Does it address real-world concerns such as evals, cost, latency, reliability or safety?
+    high: central focus
+    low: toy only
+
+alignment_bands:                # LLD 9.4; contiguous from 0 to 10, highest first
+  - { min: 9.0, label: "Must-read / must-build for an AI Engineer" }
+  - { min: 7.0, label: "Highly relevant" }
+  - { min: 4.0, label: "Useful background" }
+  - { min: 0.0, label: "Low relevance (off-topic, fluff, or unrelated)" }
+
+time:
+  reading_wpm: 230              # LLD 9.1, plain prose
+  technical_wpm: 180            # LLD 9.1, text with maths or code
+
+  basis:                        # NEW vs LLD: every time estimate records which basis was used
+    - id: stated_in_post
+      rule: The post states a size or duration of the resource (weeks, hours, questions, minutes).
+    - id: estimated_from_post
+      rule: The post describes a build or tutorial in enough detail to estimate, but states no size.
+    - id: post_only
+      rule: Nothing about the resource is stated; time is the reading time of the post itself.
+
+  stated_units:                 # NEW (Step 9, replaces stated_size_hints). The model only reports a NUMBER and a
+                                # UNIT from this list; scoring.py multiplies (the model is bad at sums).
+                                # A unit without minutes_per_unit cannot be turned into time: the post then
+                                # falls back to basis post_only. "describe" is the text the model reads.
+    - { id: minutes,   minutes_per_unit: 1,   describe: "a duration in minutes" }
+    - { id: hours,     minutes_per_unit: 60,  describe: "a duration in hours" }
+    - { id: weeks,     minutes_per_unit: 300, describe: "a number of weeks" }           # ASSUMPTION: 5 hours per week
+    - { id: questions, minutes_per_unit: 3,   describe: "a number of interview questions" }   # ASSUMPTION: 3 minutes each
+    - { id: other,                            describe: "any other unit, such as courses, modules, lessons, days or pages" }
+    - { id: none,                             describe: "the post states no size" }
+
+  hands_on_floor_minutes:       # LLD 9.1 without code lines (we have no code_lines)
+    tutorial: 0
+    mini_project: 45
+    full_project: 180
+    interview_question_set: 0
+    news: 0
+    miscellaneous: 0
+  hands_on_applies_when_basis: [stated_in_post, estimated_from_post]
+
+  cover_clamp: { low: 0.5, high: 3.0 }     # LLD 9.2: LLM cover stays within 0.5x to 3x of the floor
+  cover_clamp_applies_when_basis: [post_only]   # NEW (Step 9): the 0.5x to 3x clamp around the post's own
+                                # reading time only makes sense when the post is all we judge. For a stated or
+                                # estimated resource (a 60-hour course) the post's reading time is irrelevant,
+                                # so only the hands-on floor and limits_minutes.cover_max apply.
+  limits_minutes: { cover_max: 20160, understand_max: 43200 }   # LLD 4: 14 days and 30 days
+
+  understand:
+    depth_multiplier: { beginner: 1.5, intermediate: 2.5, advanced: 4.0, expert: 6.0 }   # LLD 9.2
+    type_multiplier:                                                                      # LLD 9.2
+      tutorial: 1.2
+      mini_project: 1.3
+      full_project: 1.5
+      interview_question_set: 2.0
+      news: 1.0
+      miscellaneous: 1.0
+    combine: geometric_mean     # of the model's estimate and cover x depth x type
+    clamp_vs_cover: { low: 1.0, high: 10 }
+    news_cap_vs_cover: 1.5
+
+  round_nice:                   # LLD 9.2: below 60 -> nearest 5; below 480 -> nearest 15; else 60
+    - { below: 60, step: 5 }
+    - { below: 480, step: 15 }
+    - { step: 60 }
+
+  buckets:                      # LLD 9.2; a day counts as 8 hours
+    edges_minutes: [15, 60, 180, 480, 1440]
+    labels: ["<15m", "15-60m", "1-3h", "3-8h", "1-3d", ">3d"]
+
+summary:                        # LLD is inconsistent (chars in 4, words in 7.8 and 8); we use words
+  target_words: { min: 60, max: 150 }
+  hard_words: { min: 30, max: 220 }          # v1 had min 40; below this the answer is re-asked
+  brief_words_below: 40                      # NEW in v2: 30 to 39 words is accepted but flagged (summary_brief)
+  single_paragraph: true
+  must_cover: [what the post teaches or claims, the author's motive]
+  motives: [educate, promote a product or course, hiring, opinion, announcement, engagement bait]

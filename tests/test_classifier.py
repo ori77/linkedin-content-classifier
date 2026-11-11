@@ -15,7 +15,8 @@ import classify_inputs as I  # noqa: E402
 import rubrics as R  # noqa: E402
 from ollama_json import LLMError, OllamaUnavailable  # noqa: E402
 
-RUB = R.load_rubrics(ROOT / "rubrics" / "rubrics.v1.yaml")
+RUB = R.load_rubrics(ROOT / "rubrics" / "rubrics.v1.yaml")        # most tests: the numbers are the v1 ones
+RUB2 = R.load_rubrics(ROOT / "rubrics" / "rubrics.v2.yaml")       # Step 10: the default rubrics
 
 TAXONOMY = {
     "version": "v1",
@@ -802,3 +803,112 @@ def test_summary_that_stays_short_lowers_confidence(tax):
     rec, _, _ = run(tax, FakeChat(b=[short, short]))
     assert "summary_short" in rec["warnings"]
     assert rec["confidence"] == 0.75             # 0.36 + 0.35 + 0.14 = 0.85 (retry), minus 0.10
+
+
+# ============================================================ Step 10: rubrics v2 and the prompt changes
+
+def test_prompt_version_label():
+    assert C.PROMPT_VERSION == "classify-2026.11.3"
+
+
+@pytest.mark.parametrize("rub", [RUB, RUB2])
+def test_system_b_tells_the_model_to_check_the_rules_in_order(rub):
+    s = " ".join(C.system_prompt_b(rub).split())
+    assert "Check the rules in order, starting with the first, and stop at the first one the post fits" in s
+    assert "a post that asks an interview question and then explains the answer is an interview type, not a tutorial" in s
+    assert s.index("Check the rules in order") < s.index("- interview_question_set:")
+
+
+def test_system_b_v2_shows_difficulty_guidance_before_the_levels():
+    s = " ".join(C.system_prompt_b(RUB2).split())
+    guide = " ".join(RUB2.data["difficulty_guidance"].split())
+    assert guide in s
+    assert s.index("DIFFICULTY") < s.index(guide) < s.index("- beginner:")
+
+
+def test_system_b_v1_has_no_difficulty_guidance():
+    s = C.system_prompt_b(RUB)
+    assert "Do not choose beginner" not in s
+
+
+def test_system_b_v2_has_the_new_interview_rule():
+    s = " ".join(C.system_prompt_b(RUB2).split())
+    assert "- interview_question_set: The post is, or advertises, one or more interview questions" in s
+
+
+def test_v2_and_v1_prompts_have_different_fingerprints(tax):
+    assert make_ctx(tax, rubrics=RUB2).prompt_sha != make_ctx(tax, rubrics=RUB).prompt_sha
+
+
+def test_summary_of_30_to_39_words_needs_no_retry_under_v2():
+    for n in (30, 35, 39):
+        assert C.check_b(good_b(summary=words(n)), RUB2) == ([], [])
+
+
+def test_summary_under_30_words_is_still_rejected_under_v2():
+    hard, soft = C.check_b(good_b(summary=words(29)), RUB2)
+    assert hard == [] and any("summary has 29 words, at least 30 are needed" in x for x in soft)
+
+
+def test_summary_of_39_words_is_still_rejected_under_v1():
+    assert C.check_b(good_b(summary=words(39)), RUB)[1]
+
+
+def test_brief_summary_gets_a_warning_only_under_v2():
+    assert "summary_brief" in warn(summary=words(30), rub=RUB2)
+    assert "summary_brief" in warn(summary=words(39), rub=RUB2)
+    assert "summary_brief" not in warn(summary=words(40), rub=RUB2)
+    assert "summary_short" not in warn(summary=words(35), rub=RUB2)
+    assert "summary_brief" not in warn(summary=words(35), rub=RUB)       # v1 has no such key
+    assert "summary_short" in warn(summary=words(35), rub=RUB)           # v1: 35 is simply too short
+
+
+def test_summary_below_the_new_minimum_is_short_not_brief():
+    w = warn(summary=words(29), rub=RUB2)
+    assert "summary_short" in w and "summary_brief" not in w
+
+
+def test_missing_summary_is_missing_not_brief():
+    w = warn(summary="", rub=RUB2)
+    assert "summary_missing" in w and "summary_brief" not in w and "summary_short" not in w
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("ML Interview Question Series: explain L1 vs L2", True),
+    ("my interview went well", True),
+    ("INTERVIEW prep", True),
+    ("The interviewer asked me about RAG", True),
+    ("50 LLM interviews tips", True),
+    ("Deloitte Interview Experience", True),
+    ("a post about chunking documents", False),
+    ("Internal viewing party", False),
+    ("", False),
+])
+def test_interview_mentioned_warning(text, expected):
+    assert ("interview_mentioned" in warn(post_text=text)) is expected
+
+
+def test_no_interview_warning_when_the_type_is_already_interview():
+    assert "interview_mentioned" not in warn(content_type="interview_question_set", post_text="Interview question of the day")
+
+
+def test_the_new_warnings_never_lower_confidence():
+    assert "interview_mentioned" not in C.PENALISED_WARNINGS and "summary_brief" not in C.PENALISED_WARNINGS
+
+
+def test_brief_summary_end_to_end_is_not_retried_and_keeps_full_confidence(tax):
+    base, _, _ = run(tax, rubrics=RUB2)
+    rec, chat, _ = run(tax, FakeChat(b=[good_b(summary=words(35))]), rubrics=RUB2)
+    assert rec["attempts"]["rest"] == 1 and len([c for c in chat.calls if c["kind"] == "b"]) == 1
+    assert "summary_brief" in rec["warnings"] and rec["retry_reasons"]["rest"] == []
+    assert rec["confidence"] == base["confidence"]
+    assert rec["rubrics_version"] == "v2" and rec["rubrics_sha"] == RUB2.sha
+
+
+def test_interview_mention_end_to_end_is_flagged_but_not_penalised(tax):
+    post = I.Post(activity_id=1, text="Interview question: how would you chunk documents for retrieval systems?")
+    base, _, _ = run(tax, rubrics=RUB2)
+    rec, _, _ = run(tax, post=post, rubrics=RUB2)
+    assert "interview_mentioned" in rec["warnings"]
+    assert rec["content_type"] == "tutorial" and rec["confidence"] == base["confidence"]
+    assert "interview_mentioned" not in base["warnings"]
