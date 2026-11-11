@@ -29,6 +29,8 @@ CONTENT_TYPE_IDS = ["interview_question_set", "full_project", "mini_project",
 ALIGNMENT_IDS = ["applicability", "technical_depth", "hands_on", "currency",
                  "career_value", "production_relevance"]
 BASIS_IDS = ["stated_in_post", "estimated_from_post", "post_only"]
+STATED_UNIT_IDS = ["minutes", "hours", "weeks", "questions", "other", "none"]
+UNCONVERTIBLE_UNIT_IDS = ["other", "none"]       # no minutes_per_unit allowed for these
 CATCH_ALL = "miscellaneous"          # must be the last content-type rule
 
 DEFAULT_PATH = Path(__file__).resolve().parents[1] / "rubrics" / "rubrics.v1.yaml"
@@ -237,13 +239,27 @@ def _check_hands_on(t: dict, problems: list[str]) -> None:
     applies = t.get("hands_on_applies_when_basis")
     if not isinstance(applies, list) or not applies or any(b not in BASIS_IDS for b in applies):
         problems.append(f"time.hands_on_applies_when_basis must be a non-empty list of {BASIS_IDS}")
-    hints = t.get("stated_size_hints")
-    if not isinstance(hints, dict):
-        problems.append("time.stated_size_hints must be a mapping")
-    else:
-        for k in ("minutes_per_interview_question", "hours_per_week_if_only_weeks_stated"):
-            if not _is_num(hints.get(k)) or hints[k] <= 0:
-                problems.append(f"time.stated_size_hints.{k} must be a number above 0")
+    _check_stated_units(t, problems)
+
+
+def _check_stated_units(t: dict, problems: list[str]) -> None:
+    units = t.get("stated_units")
+    if not isinstance(units, list):
+        problems.append("time.stated_units must be a list")
+        return
+    ids = _id_list(units, "time.stated_units", problems)
+    _same_ids(ids, STATED_UNIT_IDS, "time.stated_units", problems)
+    for item in units:
+        if not isinstance(item, dict) or item.get("id") not in STATED_UNIT_IDS:
+            continue
+        uid, per = item["id"], item.get("minutes_per_unit")
+        if not _is_text(item.get("describe")):
+            problems.append(f"time.stated_units '{uid}': 'describe' is empty")
+        if uid in UNCONVERTIBLE_UNIT_IDS:
+            if per is not None:
+                problems.append(f"time.stated_units '{uid}': must not have minutes_per_unit (it cannot be converted)")
+        elif not _is_num(per) or per <= 0:
+            problems.append(f"time.stated_units '{uid}': minutes_per_unit must be a number above 0")
 
 
 def _check_clamps(t: dict, problems: list[str]) -> None:
@@ -252,6 +268,9 @@ def _check_clamps(t: dict, problems: list[str]) -> None:
         problems.append("time.cover_clamp needs numbers 'low' and 'high'")
     elif not 0 < c["low"] <= 1 <= c["high"]:
         problems.append("time.cover_clamp must satisfy 0 < low <= 1 <= high")
+    when = t.get("cover_clamp_applies_when_basis")
+    if not isinstance(when, list) or not when or any(b not in BASIS_IDS for b in when):
+        problems.append(f"time.cover_clamp_applies_when_basis must be a non-empty list of {BASIS_IDS}")
     lim = t.get("limits_minutes")
     if (not isinstance(lim, dict) or not _is_num(lim.get("cover_max"))
             or not _is_num(lim.get("understand_max"))):
@@ -367,7 +386,7 @@ def check_file(path: Path | str = DEFAULT_PATH) -> tuple[dict | None, str | None
 def load_rubrics(path: Path | str = DEFAULT_PATH) -> Rubrics:
     """Load the rubrics or raise RubricsError listing every problem."""
     data, sha, problems = check_file(path)
-    if problems:
+    if problems or data is None or sha is None:     # the None checks only help the type checker
         raise RubricsError("rubrics problems:\n- " + "\n- ".join(problems))
     return Rubrics(data=data, sha=sha, path=Path(path))
 
@@ -376,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     path = Path(argv[0]) if argv else DEFAULT_PATH
     data, sha, problems = check_file(path)
-    if problems:
+    if problems or data is None or sha is None:     # the None checks only help the type checker
         print(f"PROBLEMS in {path}:")
         for p in problems:
             print(f"  - {p}")
