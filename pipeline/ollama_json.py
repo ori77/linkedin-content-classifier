@@ -29,11 +29,14 @@ def strip_thinking(text):
 
 
 def chat_json(model, system, user, schema, url=OLLAMA_URL, num_ctx=8192,
-              think=False, num_predict=1500, timeout=1800, keep_alive="30m"):
+              think=False, num_predict=1500, timeout=1800, keep_alive="30m", options=None):
     """Send one question. Returns (answer_dict, stats_dict).
 
     Raises OllamaUnavailable if Ollama or the model is missing,
     and LLMError if the answer is cut off or is not valid JSON.
+
+    `options` (optional dict) adds or overrides Ollama sampling options, for example
+    {"presence_penalty": 0}. When it is None the request is exactly as before.
     """
     payload = {
         "model": model,
@@ -49,6 +52,8 @@ def chat_json(model, system, user, schema, url=OLLAMA_URL, num_ctx=8192,
         },
         "keep_alive": keep_alive,
     }
+    if options:
+        payload["options"].update(options)
 
     started = time.time()
     try:

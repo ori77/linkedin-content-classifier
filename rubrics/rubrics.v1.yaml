@@ -107,10 +107,16 @@ time:
     - id: post_only
       rule: Nothing about the resource is stated; time is the reading time of the post itself.
 
-  stated_size_hints:            # ASSUMPTION: used to turn a stated size into minutes
-    minutes_per_interview_question: 3      # read the question and its answer once
-    hours_per_week_if_only_weeks_stated: 5 # only when a course gives weeks but no hours
-    video: use the stated duration as it is
+  stated_units:                 # NEW (Step 9, replaces stated_size_hints). The model only reports a NUMBER and a
+                                # UNIT from this list; scoring.py multiplies (the model is bad at sums).
+                                # A unit without minutes_per_unit cannot be turned into time: the post then
+                                # falls back to basis post_only. "describe" is the text the model reads.
+    - { id: minutes,   minutes_per_unit: 1,   describe: "a duration in minutes" }
+    - { id: hours,     minutes_per_unit: 60,  describe: "a duration in hours" }
+    - { id: weeks,     minutes_per_unit: 300, describe: "a number of weeks" }           # ASSUMPTION: 5 hours per week
+    - { id: questions, minutes_per_unit: 3,   describe: "a number of interview questions" }   # ASSUMPTION: 3 minutes each
+    - { id: other,                            describe: "any other unit, such as courses, modules, lessons, days or pages" }
+    - { id: none,                             describe: "the post states no size" }
 
   hands_on_floor_minutes:       # LLD 9.1 without code lines (we have no code_lines)
     tutorial: 0
@@ -122,6 +128,10 @@ time:
   hands_on_applies_when_basis: [stated_in_post, estimated_from_post]
 
   cover_clamp: { low: 0.5, high: 3.0 }     # LLD 9.2: LLM cover stays within 0.5x to 3x of the floor
+  cover_clamp_applies_when_basis: [post_only]   # NEW (Step 9): the 0.5x to 3x clamp around the post's own
+                                # reading time only makes sense when the post is all we judge. For a stated or
+                                # estimated resource (a 60-hour course) the post's reading time is irrelevant,
+                                # so only the hands-on floor and limits_minutes.cover_max apply.
   limits_minutes: { cover_max: 20160, understand_max: 43200 }   # LLD 4: 14 days and 30 days
 
   understand:

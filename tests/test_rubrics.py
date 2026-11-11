@@ -249,9 +249,62 @@ def test_true_is_not_a_number(good):
     assert problems_with(good, "news_cap_vs_cover")
 
 
-def test_stated_size_hint_must_be_positive(good):
-    good["time"]["stated_size_hints"]["minutes_per_interview_question"] = 0
-    assert problems_with(good, "minutes_per_interview_question")
+# ------------------------------------------------------------ time: stated units (Step 9)
+
+def unit(data, name):
+    return next(u for u in data["time"]["stated_units"] if u["id"] == name)
+
+
+def test_stated_units_values(good):
+    per = {u["id"]: u.get("minutes_per_unit") for u in good["time"]["stated_units"]}
+    assert per == {"minutes": 1, "hours": 60, "weeks": 300, "questions": 3, "other": None, "none": None}
+
+
+def test_stated_units_must_be_a_list(good):
+    good["time"]["stated_units"] = {"minutes": 1}
+    assert problems_with(good, "time.stated_units must be a list")
+
+
+def test_stated_units_missing_key(good):
+    del good["time"]["stated_units"]
+    assert problems_with(good, "time.stated_units must be a list")
+
+
+def test_stated_units_missing_unit(good):
+    good["time"]["stated_units"] = [u for u in good["time"]["stated_units"] if u["id"] != "hours"]
+    assert problems_with(good, "stated_units: missing ids")
+
+
+def test_stated_units_unknown_unit(good):
+    good["time"]["stated_units"].append({"id": "fortnights", "minutes_per_unit": 1, "describe": "x"})
+    assert problems_with(good, "stated_units: unknown ids")
+
+
+def test_stated_units_duplicate_unit(good):
+    good["time"]["stated_units"].append(copy.deepcopy(unit(good, "hours")))
+    assert problems_with(good, "stated_units: duplicate ids")
+
+
+@pytest.mark.parametrize("bad", [0, -5, "60", None, True])
+def test_stated_unit_minutes_must_be_a_positive_number(good, bad):
+    unit(good, "hours")["minutes_per_unit"] = bad
+    assert problems_with(good, "'hours': minutes_per_unit must be a number above 0")
+
+
+@pytest.mark.parametrize("name", ["other", "none"])
+def test_unconvertible_units_must_not_have_minutes(good, name):
+    unit(good, name)["minutes_per_unit"] = 10
+    assert problems_with(good, f"'{name}': must not have minutes_per_unit")
+
+
+def test_stated_unit_needs_a_description(good):
+    unit(good, "weeks")["describe"] = "  "
+    assert problems_with(good, "'weeks': 'describe' is empty")
+
+
+def test_stated_unit_without_id(good):
+    good["time"]["stated_units"].append({"minutes_per_unit": 2, "describe": "x"})
+    assert problems_with(good, "stated_units[6]: needs an 'id'")
 
 
 # ------------------------------------------------------------ time: clamps
@@ -264,6 +317,21 @@ def test_cover_clamp_low_above_one(good):
 def test_cover_clamp_high_below_one(good):
     good["time"]["cover_clamp"]["high"] = 0.9
     assert problems_with(good, "time.cover_clamp must satisfy")
+
+
+def test_cover_clamp_applies_when_unknown_basis(good):
+    good["time"]["cover_clamp_applies_when_basis"] = ["made_up"]
+    assert problems_with(good, "cover_clamp_applies_when_basis")
+
+
+def test_cover_clamp_applies_when_empty(good):
+    good["time"]["cover_clamp_applies_when_basis"] = []
+    assert problems_with(good, "cover_clamp_applies_when_basis")
+
+
+def test_cover_clamp_applies_when_missing(good):
+    del good["time"]["cover_clamp_applies_when_basis"]
+    assert problems_with(good, "cover_clamp_applies_when_basis")
 
 
 def test_limits_cover_above_understand(good):
