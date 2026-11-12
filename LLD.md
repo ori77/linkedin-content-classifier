@@ -11,6 +11,10 @@
 | **Language** | Python 3.11+ |
 | **CLI name** | `lisc` (**Li**nkedIn **S**aved **C**lassifier) |
 
+> 🛠️ **Prototype status (2026-11-12, end of chat 2 of 4).** This document describes the **target product**. What exists so far is a working prototype of the classification core, built as standalone scripts under `pipeline/` (keyphrases, embeddings, clustering and taxonomy in steps 2 to 5b; rubrics, the 7-lens classifier, the gold set and the model comparison in steps 8 to 11), writing JSONL files instead of a database, with no `lisc` command yet. Blocks marked **🛠️ Prototype note** say where the build differs from the text around them. The original design text is left unchanged so intent and build can be compared. The full record is `design/project-log.md` (section 5 lists the deviations, section 3 gives the reasons and measurements).
+>
+> **Plan:** chat 3 adds the full 673-post run, a SQLite loader and the Library and Review tabs of the dashboard, plus CSV and JSON exports; chat 4 adds the Planner, Insights and Runs tabs, the Obsidian and Notion exports and a last alignment of these documents. In the project knowledge base this LLD is kept as two files (sections 1 to 8 and sections 9 to 22); in the repository it is the single file `LLD.md`.
+
 ---
 
 ### 📑 Table of Contents
@@ -66,6 +70,8 @@
 | Tests | **pytest**, **pytest-asyncio**, **respx**, **hypothesis** | Unit, contract and property tests |
 | Lint / types | **ruff**, **mypy** (strict on `core/`) | |
 | Tracing (optional) | **OpenTelemetry** / **Langfuse** | LLM call traces and cost |
+
+> 🛠️ **Prototype note.** In use today: Python 3.11 in a conda environment (`lisc_env`), Ollama over plain HTTP through one small helper (`pipeline/ollama_json.py`, structured JSON output), `nomic-embed-text` for embeddings, UMAP plus **scikit-learn's `HDBSCAN`** (not the separate `hdbscan` package, to save a dependency), PyYAML for the taxonomy and rubrics files, pandas and numpy for data, `beautifulsoup4` and `lxml` for the two ingestion scripts, and pytest (with mutation checks written as plain Python scripts in `tools/`). One `requirements.txt` serves both running and testing. Not used yet: Typer/Rich, SQLAlchemy/Alembic, sqlite-vec, Streamlit (chat 3 adds SQLite and Streamlit), FastAPI, httpx/tenacity, trafilatura, PyMuPDF. Each prototype script has its own small command line.
 
 ---
 
@@ -154,6 +160,33 @@ linkedin-saved-classifier/
 └── tests/
     ├── unit/  ├── contract/  ├── integration/  └── fixtures/
 ```
+
+> 🛠️ **Prototype note: the layout that exists today.** The package `src/lisc/` has not been created. The prototype is a flat set of scripts, and the folder names differ from the tree above (`pipeline/` and `input-data/` instead of `src/lisc/` and `data/`). When the real package is built in chats 3 and 4, the scripts move into modules and this tree applies again.
+>
+> ```text
+> repo/
+> ├── pipeline/            # step scripts and their helpers
+> │   ├── ollama_json.py   # structured-output call to Ollama
+> │   ├── step2 to step5   # keyphrases, embeddings, clustering, taxonomy draft (chat 1)
+> │   ├── step5b_finalize.py        # validates and freezes the taxonomy
+> │   ├── rubrics.py       # loads, validates and fingerprints the rubrics file
+> │   ├── scoring.py       # all arithmetic: time, alignment score, buckets
+> │   ├── classify_inputs.py        # reads and checks taxonomy, assignments, posts
+> │   ├── classifier.py    # prompts, answer checks, confidence, cache key, classify_post
+> │   ├── step9_classify.py         # command line: classify posts into a JSONL file
+> │   ├── step10_gold_sample.py     # picks the 30 gold posts, writes the labelling sheet
+> │   ├── step10_gold_labels.py     # reads the filled sheet
+> │   ├── step10_compare.py         # scores any run against the gold labels
+> │   └── taxonomy/                 # taxonomy.v1.yaml (the only committed file here) and the assignments file
+> ├── input-data/          # posts_with_save_dates.csv (the merged export + captures)
+> ├── rubrics/             # rubrics.v1.yaml (untouched), rubrics.v2.yaml (default)
+> ├── tests/               # at the repo root; 771 tests expected
+> ├── tools/               # mutation-check scripts (not run by CI)
+> ├── gold/                # hand-labelled posts and run files (git-ignored: holds post text)
+> └── .github/workflows/tests.yml    # runs pytest on every pull request
+> ```
+>
+> Not committed by design: `*.jsonl`, embeddings, cluster files, everything in `pipeline/taxonomy/` except `taxonomy.v1.yaml`, and `gold/`. The two ingestion scripts (`parse_saved.py`, `merge_export.py`) are not yet committed either.
 
 ---
 
@@ -244,6 +277,8 @@ classDiagram
     PipelineRunner --> Classifier
     PipelineRunner --> Repository
 ```
+
+> 🛠️ **Prototype note.** The prototype has no class hierarchy: `scoring.py` plays the part of `TimeEstimator`, `AlignmentScorer` and the bucket logic; `classifier.py` holds the prompt building, the validator, the `ConfidenceScorer` and the `Classifier` orchestrator as functions; `classify_inputs.py` replaces the collectors for the one input file; and there is no `Shortlister`, `FewShotRetriever` or `PipelineRunner` (a loop in `step9_classify.py` does the runner's job).
 
 ---
 
@@ -424,6 +459,13 @@ class Classification(BaseModel):
     created_at: datetime
 ```
 </details>
+
+> 🛠️ **Prototype note: two calls instead of one, and a different record.** The classifier asks the model twice per post, because a short, narrow first call is easier for an 8B-class model.
+>
+> - **Call A (subtopic):** the answer is limited to the 37 subtopic ids of the frozen taxonomy plus `other.general`, with a short evidence quote first. The topic is derived from the subtopic id.
+> - **Call B (everything else):** content type, difficulty, the size the post itself states (`stated_size` in the post's words, `stated_count` as a number, `stated_unit` as one of `minutes`, `hours`, `weeks`, `questions`, `other`, `none`), a time `basis`, rough cover and understand minutes, the same six alignment sub-scores, the summary and `self_confidence`. The model never multiplies: the code converts count and unit into minutes (`time.stated_units` in the rubrics file).
+>
+> Not built: `key_points`, `suggested_new_subtopic`, and a separate rationale field per lens. The summary is judged in **words** (target 60 to 150, hard limits 30 to 220 in rubrics v2) instead of the characters used in the schema above. Every time estimate stores its `basis` (`stated_in_post`, `estimated_from_post` or `post_only`), plus `stated_count`, `stated_unit` and `stated_minutes`, so the numbers can be audited. The output is one JSON line per post (keyed by `activity_id`), with provenance fields (`PROMPT_VERSION`, model, taxonomy sha, rubrics sha, cache key), the retry reasons of the first attempt and the clustering subtopic next to the model's choice. Validation uses plain Python checks in `classifier.py`; Pydantic models are not used yet.
 
 ---
 
@@ -626,6 +668,8 @@ WHERE i.duplicate_of IS NULL;
 ```
 </details>
 
+> 🛠️ **Prototype note.** There is no database yet: the prototype keeps one JSONL file per run, one line per post, and the posts CSV (`posts_with_save_dates.csv`, 674 rows, 673 with text) as the item table. **Chat 3 (Step 15) builds a loader that fills a SQLite database from these files, following this schema in a simplified form:** the `items`, `contents`, `classifications`, `reviews`, `runs` and `taxonomy_versions` tables and the `library` view, with the history idea (one active classification per item) kept. `activity_id` is the item key in the prototype, so the `ulid` id and `canonical_url` may be derived from it. Not planned for the first version: the vector tables and the `embeddings` table. The columns that the prototype records and this schema lacks (time `basis`, `stated_*`, retry reasons, the clustering subtopic, warnings) go into the JSON columns or extra columns.
+
 ---
 
 ## 6. Taxonomy file format
@@ -725,6 +769,8 @@ topics:
 - The file's **SHA-256** is computed on load. A new hash means a new row in `taxonomy_versions` and a new embedding of the nodes.
 - `lisc taxonomy diff v1 v2` shows added, removed and renamed nodes. A `migrations:` block can map old IDs to new ones so past labels can be re-mapped without re-running the LLM.
 
+> 🛠️ **Prototype note: the real `taxonomy.v1.yaml`.** It was frozen on 2026-11-09 by `step5b_finalize.py` from the hand-edited gemma draft and is **not** the seed list above. It has **13 topics and 37 subtopics** (one subtopic per cluster) plus Other (43 posts), covering 673 posts; its fingerprint is `3baa2b81d347`. Ids are derived from the names by the script and use hyphens, not underscores: `topic-slug.subtopic-slug`, for example `ai-fundamentals.python-for-ai-and-ml` and `ai-tools-and-learning-resources.open-source-ai-repositories-and-tools`; the fallback is `other.general`. Topics by size: RAG 110, LLM Architecture 105, AI Agent Development 102, AI Engineering Practices 77, Career Development 66, AI Fundamentals 39, Model Optimization and Generalization 26, Data Science and Data Engineering 25, AI Tools and Learning Resources 25, ML Engineering 20, Data Structures and Algorithms 13, Generative AI Systems 12, Software Engineering Practices 10. The validator (`step5b_finalize.py`) checks that every cluster is used exactly once, names and ids are unique, descriptions are not empty and no topic is empty; it recomputes ids and counts, refuses to overwrite a frozen file without `--force`, and a change becomes `taxonomy.v2.yaml` through `--version v2`. There is no `version` or `role_profile` key and no `migrations:` block yet. Known weakness: neighbouring subtopics overlap (for example the three agent subtopics, and the two retrieval ones), which caps subtopic accuracy; whether to build a v2 is open item 49 in the project log.
+
 ---
 
 ## 7. Module designs
@@ -748,6 +794,8 @@ class Collector(Protocol):
 > 🔄 **Removed: `BrowserCollector`.** Automated scrolling or page saving of linkedin.com (logged in or out) breaks LinkedIn's User Agreement, so it isn't part of the design. **Rule: no component of `lisc` ever sends a request to `linkedin.com` or `lnkd.in`.**
 
 **URL canonicalisation:** lower-case the host, strip `utm_*`, `trk`, `lipi` and `trackingId` parameters, remove fragments. 🔄 For LinkedIn posts the canonical form is `https://www.linkedin.com/feed/update/urn:li:activity:<ID>`. `lnkd.in` short links are **kept as-is and never resolved** (resolving one is a request to LinkedIn).
+
+> 🛠️ **Prototype note.** The collectors are not built as classes. The user made the export and the captures by hand, and two standalone scripts (`parse_saved.py`, `merge_export.py`, see §7.12) produced `posts_with_save_dates.csv`, which is the only input of the classifier (read and checked by `classify_inputs.py`). The no-LinkedIn rule holds: no prototype script contacts linkedin.com or lnkd.in, and a link fetcher is deliberately not built (326 of 333 posts with links use `lnkd.in`).
 
 ### 7.2 Extractors
 
@@ -775,6 +823,8 @@ flowchart TD
 
 **Merging rule (post plus linked article):** the combined `body_text` is `"[POST]\n{post}\n\n[LINKED ARTICLE]\n{article}"`, and metrics are summed. The item's `kind` becomes `article` if the article has more than 3× the post's words; otherwise it stays `post`.
 
+> 🛠️ **Prototype note.** Only post text is used. The classifier reads `text_clean`, the attachment title and site, and the links as text from the posts CSV, caps the text at 12,000 characters, and notes a post with no text as skipped (1 of 674). There are no article or PDF extractors; every item is a post. Judging a linked resource from the post's own words is a deliberate rule (see the note under §9.1 in part 2).
+
 ### 7.3 Normaliser and dedup
 
 - **Clean:** Unicode NFKC, collapse whitespace, remove zero-width characters, strip "See more", "…more" and similar UI text. Emojis are kept (they carry tone).
@@ -783,6 +833,8 @@ flowchart TD
   1. Same `canonical_url` → upsert (no new row).
   2. Same `content_hash` → mark the later one `duplicate_of`.
   3. Near-duplicate: embedding cosine ≥ 0.97 **and** word-count ratio within 0.8–1.25 → mark `duplicate_of` (reversible in the dashboard).
+
+> 🛠️ **Prototype note.** NFKC cleaning is done by the capture parser (`text_clean`). Duplicate detection is **not built**: reposts and near-identical posts exist (visible in clusters 0, 8, 11 and 23) and inflate cluster sizes. Every post is classified, and identical reposts each get their own result row (`activity_id` is part of the cache key). Open item 6 in the project log.
 
 ### 7.4 Enricher
 
@@ -801,6 +853,8 @@ def compute_metrics(c: ExtractedContent) -> ContentMetrics:
     )
 ```
 
+> 🛠️ **Prototype note.** Only the post's word count is measured (the CSV carries `word_count` and `has_image`). Code lines, PDF pages and video seconds are not available from post text, so `technical` is always false (reading speed 230 words per minute) and the hands-on time uses fixed floors instead of code lines.
+
 ### 7.5 Shortlister
 
 > **In simple terms:** cheap maths narrows ~40 subtopics down to the 5 most likely, so the AI chooses among a few good options.
@@ -818,6 +872,8 @@ class Shortlister:
 
 - Taxonomy node text that gets embedded is `"{topic.name} › {sub.name}: {sub.description} ({topic.description})"`.
 - **Auto mode:** if the taxonomy has ≤ 60 subtopics *and* `shortlist.mode = auto`, the full taxonomy is cheap enough to send, but the shortlist is still computed so its top-1 can feed the confidence score.
+
+> 🛠️ **Prototype note: no shortlister, by design.** The clustering assigned each post exactly one subtopic, not a ranked list, so there is nothing to shortlist from. With 37 subtopics the whole taxonomy fits in the prompt (about 3,500 tokens for call A), so the model chooses among **all 37 ids plus `other.general`** through an enum in the answer schema. The clustering's subtopic is kept only as a second opinion: it feeds the confidence score (agreement) and the gold-set comparison, where it turned out to match the user's label about as often as the model (14 and 11 of 30 for subtopic on the reviewed labels).
 
 ### 7.6 Classifier (orchestrator)
 
@@ -887,6 +943,8 @@ class Classifier:
         return cls
 ```
 
+> 🛠️ **Prototype note.** `classify_post` in `classifier.py` follows the same order with these differences: no shortlist and no few-shot examples (both are chat 4 candidates: the review corrections become the examples); **two calls** (A then B, see §4); the **cache key** is a sha256 of `activity_id`, the input hash, the prompt hash (both system prompts, both schemas and `PROMPT_VERSION`, now `classify-2026.11.3`), the model, the option signature (think, `num_ctx`, extra options), the taxonomy hash and the rubrics hash, so any change forces a new answer; results are appended to a JSONL file (flushed after each post), a run resumes by skipping keys already in the file, and failures go to `<out>.failures.jsonl`. The review rule is still `confidence < 0.60 or other.general`, but measurements showed it flags almost nothing (open item 48); the confidence formula itself differs from §9.5 (see part 2).
+
 ### 7.7 LLM provider adapter
 
 > **In simple terms:** one interface, many AI vendors. Swapping provider is a config change.
@@ -909,6 +967,8 @@ class LLMClient(Protocol):
 
 **Model tiering (optional):** use a cheaper, faster model for bulk work, and automatically **escalate** to a stronger model when confidence < `escalate_below` (default 0.45) or validation fails twice.
 
+> 🛠️ **Prototype note.** Only Ollama is implemented, in `ollama_json.py`: it sends the JSON schema as `format`, `think` false, temperature 0, `keep_alive`, a fixed `num_predict` of 1500 and an optional `options` dictionary (for example `presence_penalty`). The enum constraint is applied to call A over all subtopic ids. There is no escalation tier. Measured: the structured output worked for `qwen3`, `qwen3.5` and `gemma4` (0 failures in 30 posts each) and `think: False` appears to be honoured. Known gaps: no `--num-predict` option (it made a thinking-mode test fail on the first two posts), no per-call timeout (one call stalled for about 22 minutes, most likely the laptop sleeping), and the Qwen3.5 models need `--presence-penalty 0`. Open items 45 and 47.
+
 ### 7.8 Validator
 
 | Check | Rule | On failure |
@@ -920,6 +980,8 @@ class LLMClient(Protocol):
 | Time sanity | LLM cover within `[0.5×, 3×]` baseline | Clamp (see §9.2) |
 | Summary | 1 paragraph (no `\n\n`), 40–220 words, no bullet characters | Retry once, else trim |
 | Type/time coherence | `full_project` ⇒ understand ≥ 180 min; `news` ⇒ difficulty ≤ intermediate (warning only) | Lower confidence by 0.1 |
+
+> 🛠️ **Prototype note.** The checks live in `classifier.py` and `scoring.py`. Differences: the hierarchy check disappears (the topic is derived from the subtopic id); the summary rule is **30 to 220 words** in rubrics v2 (a summary of 30 to 39 words is accepted and only flagged `summary_brief`, because the old 40-word minimum re-asked half of all posts for nothing); line breaks and bullets are repaired in code instead of retried; a first answer that fails a check is retried once with the reason appended and the reasons are stored (`retry_reasons`); a usable first answer is kept if the retry fails hard; an unusable stated size is repaired in code (the basis falls back to `post_only` with a `repaired:...` note); and a new warning, `interview_mentioned`, marks posts that contain the word "interview" but were not typed `interview_question_set`. Neither new warning lowers the confidence. The relative cover clamp applies only when the basis is `post_only`.
 
 ### 7.9 Review and feedback
 
@@ -935,6 +997,8 @@ flowchart LR
 
 **FewShotRetriever:** embeds the new item, finds the top-n most similar *reviewed* items (cosine ≥ 0.6) and injects them as compact examples (title, first 120 words, final labels, one-line reason). Maximum 3 examples, about 600 tokens.
 
+> 🛠️ **Prototype note.** Not built yet. Chat 3 builds the Review tab (lowest confidence first, editable dropdowns, approve / save fix / skip, the model's reasons, fixes saved to `reviews`); chat 4 uses the saved corrections as examples in the prompt. Review has so far been done offline on the gold set: 19 of the user's 30 labels were questioned and re-decided in a spreadsheet, with the original and reviewed labels kept side by side (`gold_labels_reviewed.csv`).
+
 ### 7.10 Exporters
 
 | Format | Output |
@@ -942,6 +1006,8 @@ flowchart LR
 | CSV / JSON | Flat `library` view, one row per item |
 | Obsidian Markdown | One `.md` per item with YAML front-matter (all lenses) + summary + link, plus an index note per topic |
 | Notion | Database rows via the Notion API (`NOTION_TOKEN`, `NOTION_DB_ID`), with properties mapped to Select / Number / Text fields |
+
+> 🛠️ **Prototype note.** Not built. Plan: CSV and JSON in chat 3 (Step 17), Obsidian and Notion in chat 4.
 
 ### 7.11 Taxonomy discovery (Phases A → B → C)
 
@@ -1001,6 +1067,14 @@ sequenceDiagram
 - With fewer than 100 items, `discover` warns and falls back to **seed-only + Phase C**.
 - Hard cap of 15 topics and 6 subtopics per topic. Extra clusters are merged by nearest centroid.
 - Discovery never labels items. It only proposes the tree; labelling always happens in Phase B.
+
+> 🛠️ **Prototype notes (chat 1, 2026-11).** The prototype under `pipeline/` differs from the text above:
+> 1. **Embeddings** use the **keyphrases only** (prefix `clustering:`, model `nomic-embed-text`), not title plus the first 400 words. Format words such as "interview", "roadmap", "course", "guide" or "free" are dropped before embedding (the "subject-only" variant; text changed for 271 of 673 posts), because format belongs to lens 5 (content type) and was mixing with subject in the clusters. The raw keyphrases are untouched. The keyphrases came from `qwen3` (about 2.8 s per post, 673 posts in about 30 minutes) and years are stripped by a regular expression, because the model ignored the "no years" rule.
+> 2. **Clustering** uses UMAP (10 dimensions, `n_neighbors` 15, cosine, seed 42) and **scikit-learn `HDBSCAN`** (`leaf` selection, minimum cluster size 12), plus a **noise-rescue second pass** with a junk guard and an outlier-peeling step, because many noise points were small real topics. Result: **37 clusters** (21 from the main pass, 16 rescued) and 43 noise posts (6%).
+> 3. **Step 6 "Build the hierarchy"** became two small jobs: one call to a larger model (`gemma3:12b`, topic list only, about 200 s) proposes the parent topics, then one **enum-constrained call per cluster** (`qwen3`) places each cluster on a topic. An 8B model could not group all 37 clusters in one call (it forgot clusters and gave 17 to 19 topics). The measured "generic share" of each cluster flags catch-all clusters; the model's own coherence rating was useless (36 of 37 "clear"). There is no seed list: the draft came from the clusters alone.
+> 4. **Phase B freeze** is `step5b_finalize.py` after a **human edit** of the draft (cluster 22 to RAG, clusters 15 and 36 to AI Fundamentals, new topics for Data Science and for AI Tools and Learning Resources). Phase C (`taxonomy suggest`) is not built.
+>
+> Details and measurements: `design/project-log.md`, Steps 2 to 5b.
 
 ### 7.12 Saved-page capture and merge
 
@@ -1087,6 +1161,8 @@ flowchart LR
 | `lnkd.in` links hide their destination | Not resolved automatically; classify from text + attachment title. The URL is kept so you can open it yourself |
 | Very long scrolls get heavy | Checkpoint saves; images blocked; capture can be spread over several sessions |
 | Export has no content, captures have no save date | The merge combines both; either alone still works (with less information) |
+
+> 🛠️ **Prototype note.** The two reference scripts exist and produced `posts_with_save_dates.csv` (674 rows, 18 columns, 673 with text, `saved_at` and `status` included). They live outside the repository for now and are to be committed with their own requirements file (`beautifulsoup4`, `lxml`, `pandas`). The columns that the classifier uses are `activity_id`, `text_clean`, `word_count`, `urls`, `attachment_title`, `attachment_site` and `has_image`. Link counts measured on the real file: `urls` filled for 333 posts, 326 of them `lnkd.in`, 7 plain links; `attachment_title` for 70 posts.
 
 ---
 
@@ -1206,6 +1282,12 @@ alignment:
 ```
 </details>
 
+> 🛠️ **Prototype note: prompts and rubrics as built.**
+> - **Prompts** are plain Python strings in `classifier.py` (no Jinja2 templates, one dependency fewer) with `PROMPT_VERSION` **`classify-2026.11.3`**; a hash of both system prompts, both schemas and the version is part of the cache key. The largest real prompt is about 3,726 tokens of the 8,192 context (call A system prompt about 3,500 tokens, call B about 1,300).
+> - **Rubrics** are in `rubrics/rubrics.v2.yaml` (default, fingerprint `fdab10ef08be`; `rubrics.v1.yaml` is kept untouched because stored results refer to its fingerprint `a0eea6326272`). `rubrics.py` loads the file, validates it (ids, rule order, weights sum to 1, contiguous bands, multiplier ordering) and fingerprints it independently of line endings. v2 changed three things only: (1) the interview rule reads "one or more interview questions" (a single question with its answer, a "question of the day", a series, or questions asked in a real interview), because the first gold-set run never used the rule; (2) a new `difficulty_guidance` text (judge by what the reader must already know; unexplained technical terms mean at least intermediate; friendly tone, short length or advertising do not mean beginner); (3) summary hard minimum 30 words with a `summary_brief` warning below 40. The prompt also tells the model to check the content-type rules **in order from the first**.
+> - **Judging basis (user decision, 2026-11-09):** the model classifies **the resource the post advertises, using only what the post states**; when the post says nothing about the resource, the post's own reading time is used. Every time estimate therefore carries a `basis`.
+> - **Not built:** few-shot examples (the review corrections are the planned source), the candidates list (replaced by the enum of all subtopics) and `suggested_new_subtopic`.
+
 ### 8.1 Smart truncation
 
 When `est_tokens > max_input_tokens` (default 6,000):
@@ -1214,7 +1296,11 @@ When `est_tokens > max_input_tokens` (default 6,000):
 3. Insert `[… {n} words omitted …]` markers.
 4. Metrics are always computed on the **full** text, so time estimates stay accurate.
 
+> 🛠️ **Prototype note.** Posts are short (median about 190 words, at most about 3,000 characters), so no smart truncation exists; text is simply capped at 12,000 characters, which no post reaches.
+
 ---
+
+> 🛠️ **Prototype status for sections 9 to 22 (2026-11-12, end of chat 2 of 4).** As above, these sections describe the **target product**, and blocks marked **🛠️ Prototype note** say where the build differs. The prototype covers the classification core (sections 9, 15 and parts of 11, 17 and 22) as scripts under `pipeline/`; sections 10, 12, 13, 14 and 16 are mostly not built yet. Full record: `design/project-log.md` (section 5 deviations, section 3 reasons and measurements). Plan: chat 3 = full 673-post run, SQLite loader, Library and Review tabs, CSV and JSON export; chat 4 = Planner, Insights and Runs tabs, Obsidian and Notion exports, last alignment of these documents.
 
 ## 9. Algorithms
 
@@ -1233,6 +1319,8 @@ hands_on_min  = { tutorial: code_lines × 0.5, mini_project: 45 + code_lines × 
                   full_project: 180 + code_lines × 1.0, others: 0 }   # applied in finalize()
 baseline_cover = ceil(max(1, read_min + code_min + image_min + pdf_min + video_min))
 ```
+
+> 🛠️ **Prototype note: what is measured, and what the time number means.** Only the post's word count is known (no code lines, PDF pages or video seconds), so the post's own reading time is `word_count / 230` and the "technical" speed is never used. The hands-on extras become **fixed floors** (`tutorial` 0, `mini_project` 45, `full_project` 180 minutes) in `scoring.py`. The bigger change is **what is being timed** (user decision, 2026-11-09): the time is for **the resource the post advertises**, using only what the post states, falling back to the post's own reading time when it says nothing. Call B therefore returns `stated_size`, `stated_count`, `stated_unit` (`minutes`, `hours`, `weeks`, `questions`, `other`, `none`) and a `basis`; the **code** converts count and unit to minutes with `time.stated_units` in the rubrics file (minutes 1, hours 60, weeks 300, questions 3) and the model never multiplies. The basis is stored on every result: `stated_in_post`, `estimated_from_post` or `post_only`. About **87% of the gold posts are `post_only`**, i.e. they say nothing about the size of the resource, so for most posts the time is a reading time plus the hands-on floor. No link fetcher exists (326 of 333 posts with links use `lnkd.in`), so linked material is never measured.
 
 ### 9.2 Time estimation: finalise
 
@@ -1260,12 +1348,16 @@ def finalize(b, llm, difficulty, ctype):
 - Buckets: `<15m`, `15–60m`, `1–3h`, `3–8h`, `1–3d` (counted as 8 h days), `>3d`.
 - **Why a geometric mean?** It blends two estimates that may differ by a large *factor* without letting either extreme dominate.
 
+> 🛠️ **Prototype note.** `scoring.py` follows this structure with the depth and type multipliers, bucket limits and rounding taken from the rubrics file (validated on load, including the multiplier ordering). Differences: (1) the **relative clamp** `[0.5×, 3×]` around the floor applies **only when the basis is `post_only`**, because a stated or estimated resource size legitimately differs from the post's reading time; (2) when the post states a size, the stated minutes (count × unit) take the place of the model's cover estimate; (3) a stated size that cannot be used is repaired in code, the basis falls back to `post_only` and a `repaired:...` note is stored. The baseline, the model's number, the final number and the basis are all kept in the result so each estimate can be audited. The time lens has no hand-labelled values to compare against yet (see section 15).
+
 ### 9.3 Hierarchical topic selection
 
 1. **Shortlist:** top-k subtopics by cosine similarity (§7.5).
 2. **Constrained choice:** the LLM must choose a `subtopic_id` from the enum. `topic_id` is derived from the subtopic prefix (the model's `topic_id` is cross-checked).
 3. **Escape hatch:** `other.general` plus `suggested_new_subtopic`.
 4. **Taxonomy growth job** (`lisc taxonomy suggest`, i.e. Phase C in §7.11): clusters the embeddings of items in `other.general` (HDBSCAN, min cluster 5) and asks the LLM to name each cluster, proposing new subtopics for you to approve.
+
+> 🛠️ **Prototype note.** Steps 1 and 3 differ: there is no shortlist (the enum holds all 37 subtopic ids plus `other.general`, see part 1 §7.5) and no `suggested_new_subtopic`. Step 2 holds: the topic is derived from the subtopic id, and the model also writes a short **evidence quote** before choosing, which helped the small models. Step 4 is not built. Measured on the 30 gold posts (reviewed labels): `gemma4:e4b` got the subtopic right in 13 of 30 and the topic in 17 of 30; 7 of the 30 posts are never right in any run because neighbouring subtopics overlap (for example the three agent subtopics). Whether to revise the taxonomy to a v2 is an open item.
 
 ### 9.4 AI-Engineer alignment score
 
@@ -1283,6 +1375,8 @@ score = round(score, 1)                → 0.0 … 10.0
 
 Weights can be tuned per user. `lisc eval --tune-weights` fits the weights to your reviewed scores with non-negative least squares, normalised to sum to 1.
 
+> 🛠️ **Prototype note.** Built as described: the model returns the six sub-scores (0 to 10), and `scoring.py` computes the weighted score and the band with the weights and bands from the rubrics file (the loader checks that the weights sum to 1 and the bands are contiguous). The model never calculates the total. Weight tuning is not built, and the alignment lens has not been checked against hand-labelled scores (the gold set holds the other lenses only).
+
 ### 9.5 Confidence score
 
 ```text
@@ -1296,6 +1390,16 @@ confidence = (0.45·c_self + 0.35·c_agree + 0.20·c_valid) × c_complete
 needs_review = confidence < 0.60  OR  subtopic == other.general
 ```
 
+> 🛠️ **Prototype note: the formula as built.** The weights 0.45, 0.35 and 0.20 are kept, but the inputs changed because there is no shortlist:
+>
+> - `c_self` = the model's `self_confidence` (nearly constant in practice, so it carries little information).
+> - `c_agree` = agreement with the **clustering's subtopic**: 1.0 if the same subtopic, 0.7 if the same topic, 0.4 otherwise.
+> - `c_valid` = validity (first try versus retry).
+> - Partial text is multiplied by 0.7, and each warning that is marked as penalised subtracts 0.1.
+> - `needs_review` is unchanged: confidence below 0.60, or `other.general`.
+>
+> **Result of the measurement:** with these inputs the 0.60 threshold flags almost nothing. With gemma, a threshold of **0.9** flags about half of the posts and catches 13 of the 17 wrong subtopics, so the threshold (or the formula, for example by dropping `c_self`) must be re-tuned on the full run in chat 3 (open item 48). The review target in section 15 (a review rate of at most 25%) cannot be met at that threshold without losing recall, which is worth deciding together with the Review tab.
+
 ### 9.6 Cache key
 
 ```text
@@ -1303,6 +1407,8 @@ cache_key = sha256( content_hash | prompt_version | model_id | taxonomy_version 
 ```
 
 Changing **any** of these causes a re-classification for that item only. Old rows are kept with `is_active = 0`.
+
+> 🛠️ **Prototype note.** The key is a sha256 of `activity_id`, the input hash, the prompt hash (both system prompts, both schemas and `PROMPT_VERSION`), the model, the option signature (think flag, `num_ctx`, extra options such as `presence_penalty`), the taxonomy hash and the rubrics hash. Because the activity id is included, identical reposts each get their own result. There is no `is_active` column in the JSONL files: a rerun with a changed input writes new lines under new keys, and the comparison scripts select a run by its file.
 
 ---
 
@@ -1358,6 +1464,8 @@ async def guarded(stage, item, sem, run):
             repo.mark_failed(item, stage.name, e)              # never crash the whole run
 ```
 
+> 🛠️ **Prototype note.** There is no state machine, runner or database: `step9_classify.py` loops over the posts one at a time (concurrency 1), appends each finished post to a JSONL file and flushes after every line. **Resume** works by skipping cache keys already in the file, so a stopped run continues where it stopped. A post that fails is written to `<out>.failures.jsonl` and the run goes on. There is no rate limiter, no tenacity back-off and no batch mode; the first answer is retried once with the failure reason appended. Chat 3 (Step 15) adds the SQLite loader; the status column then replaces the file-based resume, and a simple "Runs" view comes in chat 4. Before the long run, switch off sleep on the laptop (one call stalled for about 22 minutes, most likely a sleep).
+
 ---
 
 ## 11. Error handling
@@ -1375,6 +1483,8 @@ async def guarded(stage, item, sem, run):
 | Capture parser finds 0 cards 🔄 | Collect | Stop and print "no post cards found: check you passed the largest `saved_resource(N).html`, or update `collectors.capture.card_selector`" | — |
 
 All errors are written to `items.last_error` and the run log with a stable `error_code` (e.g. `E_FETCH_403`, `E_LLM_SCHEMA`).
+
+> 🛠️ **Prototype note.** Rows that apply today: *LLM schema error* (one retry with the reasons appended, then the post goes to the failures file; a usable first answer is kept when the retry fails hard), *taxonomy invalid* (the loaders refuse a bad taxonomy or rubrics file with a readable message) and *capture parser finds 0 cards*. Not built: back-off and `Retry-After`, escalation, refusal handling, harder truncation, WAL mode and stable `error_code` values. Known gaps: **no per-call timeout** (a stalled call blocks the run, open item 45) and **no `--num-predict` option**, which made a thinking-mode test fail on its first two posts (open item 47).
 
 ---
 
@@ -1467,6 +1577,8 @@ LISC_LOG_LEVEL=INFO
 
 Precedence: **CLI flags > environment variables > `config.yaml` > defaults.**
 
+> 🛠️ **Prototype note: no `config.yaml` yet.** The prototype is configured by **command-line options** on each script and by the **rubrics file** (`rubrics/rubrics.v2.yaml` holds the time, band, weight and summary-length settings), with no `.env` and no secrets (everything is local). The model name, the Ollama address, `num_ctx`, the think flag, `keep_alive` and extra options such as `--presence-penalty` are options of `step9_classify.py`; defaults for the model are in code (the full run in chat 3 uses `gemma4:e4b`, approved but not yet a code default). The settings above that the prototype does not use: `database_url`, escalation, discovery (a one-off), shortlist and few-shot settings, concurrency beyond 1, rate limit, retry, batch, the collectors blocks (the two ingestion scripts take their paths as arguments) and the export block. A real `config.yaml` arrives with the `lisc` package.
+
 ---
 
 ## 13. Interfaces: CLI and optional REST API
@@ -1496,6 +1608,19 @@ Precedence: **CLI flags > environment variables > `config.yaml` > defaults.**
 | `lisc doctor` | 🆕 Check Ollama is reachable on localhost, models are pulled, and the vector dimension matches |
 | `lisc stats` | Counts, costs and status breakdown |
 
+> 🛠️ **Prototype note: what stands in for each command today.** There is no `lisc` command. Each script is run with `python pipeline/<script>.py` plus options:
+>
+> | Target command | Prototype stand-in |
+> |---|---|
+> | `ingest` / `coverage` | `parse_saved.py` and `merge_export.py` (not yet committed) |
+> | `taxonomy discover` | steps 2 to 5 scripts (keyphrases, embeddings, clustering, draft) |
+> | `taxonomy approve` | `step5b_finalize.py` (`--force` to overwrite a frozen file, `--version v2` for a new version) |
+> | `process` / `run` / `reclassify` | `step9_classify.py` (resumes from its JSONL output) |
+> | `eval` | `step10_compare.py` (scores any run file against the gold labels) |
+> | gold set | `step10_gold_sample.py` and `step10_gold_labels.py` |
+>
+> **Plan:** chat 3 adds the first real commands needed for the dashboard (load into SQLite, export CSV and JSON, launch the dashboard); chat 4 adds Obsidian and Notion export. `doctor`, `stats`, `retry`, `reembed` and the REST API are not planned for the first version.
+
 ### 13.2 REST API (server mode, FastAPI)
 
 | Method | Path | Body / Query | Returns |
@@ -1510,6 +1635,8 @@ Precedence: **CLI flags > environment variables > `config.yaml` > defaults.**
 | `GET` | `/taxonomy` | — | Current tree |
 
 Auth: single bearer token from `.env` (`LISC_API_TOKEN`). This is a single-user system.
+
+> 🛠️ **Prototype note.** Not built and not planned for chats 3 and 4 (listed under extras in §21).
 
 ---
 
@@ -1534,6 +1661,13 @@ flowchart TB
 | **Planner** | Input: available minutes and a target topic. Output: a greedy knapsack of items maximising `alignment_score` per minute, ordered beginner → advanced |
 | **Insights** | Items per topic, difficulty distribution, alignment histogram, "Other" rate over time, total backlog hours |
 | **Runs** | Run history, token and cost totals, failed items with error codes and a retry button |
+
+> 🛠️ **Prototype note: which tab arrives when.** The user decided that the **full dashboard** is the main deliverable, so the plan is four chats in total:
+>
+> - **Chat 3 (Steps 13 to 18):** the full 673-post run with `gemma4:e4b`, the SQLite loader, the **Library** tab (filters, table and cards; the semantic search box is a candidate to drop or defer because no vector store exists) and the **Review** tab (lowest confidence first, editable dropdowns, approve / save fix / skip, the model's reasons, fixes saved to `reviews`), plus CSV and JSON export.
+> - **Chat 4:** **Planner**, **Insights** and **Runs** tabs, Obsidian and Notion exports, the final checks and the last alignment of these documents.
+>
+> Differences already known: the Review tab will show the new fields (time `basis`, warnings, retry reasons, the clustering's subtopic next to the model's); "Mark done" needs a small `progress` table or column that the prototype does not have yet.
 
 ---
 
@@ -1560,6 +1694,19 @@ flowchart TB
 
 `lisc eval` prints a Rich table and writes `data/eval/{timestamp}.json`, so prompt or model versions can be compared side by side (`lisc eval --compare A B`).
 
+> 🛠️ **Prototype note: the gold set and the numbers so far.** The gold set holds **30 posts** (not the 100 of the build checklist), picked by `step10_gold_sample.py` and labelled by the user in a spreadsheet for **topic, subtopic, difficulty and content type only**: no time, alignment or summary labels. 19 of the 30 labels were questioned and re-decided in a review pass; the original and reviewed labels are kept side by side (`gold_labels_reviewed.csv`), and the **reviewed labels** are what the numbers below use. `step10_compare.py` scores any run file against them.
+>
+> | Lens | Target | `gemma4:e4b` on the gold set | Status |
+> |---|---|---|---|
+> | Topic | ≥ 85% | 17 of 30 (57%) | below target |
+> | Subtopic | ≥ 70% | 13 of 30 (43%) | below target |
+> | Difficulty ±1 | ≥ 90% | 30 of 30 (100%); exact 17 of 30 | meets target |
+> | Content type | ≥ 85% | 26 of 29 (90%) | meets target |
+> | Review rate | ≤ 25% | the 0.60 rule flags almost nothing; at 0.9 about half of the posts | open (see §9.5) |
+> | Time, alignment, summary | see table above | not measured against labels | no labels yet |
+>
+> **How far to trust these:** n = 30 is small, and some fixes (rubrics v2, the interview rule, the difficulty guidance) were chosen after looking at these same posts, so the numbers are optimistic. 7 of the 30 posts are never right in any run, which points at overlapping subtopics in taxonomy v1 rather than at the models. Also, the topic and subtopic misses are partly an effect of the taxonomy: the clustering's own subtopic matches the user's label about as often as the model does (14 and 11 of 30 on the reviewed labels). Calibration check: with `gemma`, a confidence threshold of 0.9 catches 13 of the 17 wrong subtopics. Not built: `lisc eval` tables, macro-F1, κ, the eval JSON files, `--compare` and the LLM-as-judge for summaries. Plan: a larger gold sample drawn from the Review tab corrections in chats 3 and 4.
+
 ---
 
 ## 16. Observability
@@ -1567,6 +1714,8 @@ flowchart TB
 - **Structured logs** (JSON via `structlog`) with `run_id`, `item_id`, `stage`, `duration_ms` and `error_code`.
 - **Per-LLM-call record:** model, input and output tokens, latency, retries and cache hit, stored in `runs` aggregates and optionally sent to Langfuse or OpenTelemetry.
 - **`lisc stats`**: items by status, review rate, "Other" rate, cumulative tokens, estimated cost (prices from `config.yaml → pricing`, which you keep up to date).
+
+> 🛠️ **Prototype note.** Not built. The scripts print progress and a summary to the console; each result line already carries the model, retry reasons, warnings and the time taken, and the failures file lists what went wrong. A run summary (counts, time, retries) comes with the Runs tab in chat 4. Cost is zero because everything runs locally.
 
 ---
 
@@ -1585,6 +1734,8 @@ flowchart TB
 
 Coverage target: ≥ 85% on `core/`, `classify/` and `pipeline/`.
 
+> 🛠️ **Prototype note: how the prototype is tested.** About **771 tests** are expected to pass (`python -m pytest -q` at the repository root; `tests/` is at the root, not under `src/`). They cover the rubrics loader and fingerprint, the scoring arithmetic (time, bands, alignment, stated units, hands-on floors), the input checks, the prompts and answer checks in the classifier, the confidence formula, the cache key, and the taxonomy validator, using a **fake LLM** for the classifier. Every new test file is checked with a **mutation check**: a small script in `tools/` changes the code with a Python string replacement (never `sed`), runs the tests, confirms they fail, and restores the file. GitHub Actions (`.github/workflows/tests.yml`) runs pytest on every pull request. Not built: hypothesis property tests, contract tests with recorded responses, extractor and capture fixtures (the capture parser has no committed fixtures yet), the no-LinkedIn guard test, integration and UI tests, and a coverage target. Real-model runs are done only by hand on the gold set.
+
 ---
 
 ## 18. Cost model
@@ -1601,6 +1752,8 @@ total = N_items × cost_per_item × (1 + retry_rate + escalation_rate × price_r
 - With a small or fast model tier, a few hundred items is typically a small amount of money. Check your provider's **current** pricing page and put the numbers in `config.yaml → pricing` so `lisc stats` reports real estimates.
 - **Savings:** prompt caching of the static system prompt (if your provider supports it), batch API for back-fills, local embeddings, and skipping already-cached items.
 
+> 🛠️ **Prototype note.** The money cost is **zero** (local models), so the relevant cost is **time**. Measured with two calls per post: `gemma4:e4b` takes **13.5 s per post**, about **2.5 hours for all 673 posts** (1 retry in 30 posts); `qwen3.5:4b` 18.5 s; `qwen3.5:9b` 71.1 s; `qwen3:latest` 65 to 96 s. The prompts are larger than the estimate above because call A carries all 37 subtopics: the largest real prompt is about 3,726 tokens of the 8,192 context (call A system prompt about 3,500 tokens, call B about 1,300). Because the run is long, it should be done with sleep switched off.
+
 ---
 
 ## 19. Security, privacy and compliance
@@ -1616,6 +1769,8 @@ total = N_items × cost_per_item × (1 + retry_rate + escalation_rate × price_r
 | Server mode | Bearer token, HTTPS via reverse proxy, Postgres with a least-privilege user |
 | 🆕 Local-LLM residual risks | See the [local privacy checklist in §22.5](#225-local-privacy-checklist). Local inference removes the AI-provider risk, but not exposed ports, cloud models, synced folders, supply chain or prompt injection |
 
+> 🛠️ **Prototype note.** The no-LinkedIn rule and the offline setting hold in the prototype (all models run through local Ollama; no script contacts linkedin.com or lnkd.in). The repository keeps post text out of version control: `*.jsonl`, embeddings, cluster files, `gold/` and every file in `pipeline/taxonomy/` except `taxonomy.v1.yaml` are git-ignored or left uncommitted. Not built: contact-detail redaction, `lisc doctor` and the exports-without-full-text option (exports will carry summaries and links, not post text, when they are built).
+
 ---
 
 ## 20. Extension points
@@ -1628,6 +1783,8 @@ total = N_items × cost_per_item × (1 + retry_rate + escalation_rate × price_r
 | New LLM vendor | Implement `LLMClient` (≈ 80 lines) |
 | OCR for image carousels | Add `OcrDocumentExtractor` (e.g. Tesseract) with higher priority for image-only PDFs |
 | Video transcripts | Add `VideoExtractor` that pulls captions when available |
+
+> 🛠️ **Prototype note.** In the prototype a new lens means adding a field to the answer schema of call B, bumping `PROMPT_VERSION`, and updating the checks and tests; the cache key changes automatically, so every post is re-asked. Changing the target role means editing the alignment section of the rubrics file (a new rubrics version) and the taxonomy. A link fetcher for the linked resources is the most useful extension (it would replace the "post only" time basis), and is deliberately not built for now.
 
 ---
 
@@ -1689,6 +1846,15 @@ total = N_items × cost_per_item × (1 + retry_rate + escalation_rate × price_r
 - [ ] FastAPI + Docker Compose server mode
 - [ ] OCR / video transcripts
 
+> 🛠️ **Prototype note: where the checklist stands (2026-11-12).** The boxes above are left unticked because they describe the `lisc` package, which does not exist. The prototype has done the following in script form:
+>
+> - **Phase 1:** the capture parser and the export merge (`parse_saved.py`, `merge_export.py`, not yet committed) and the activity-ID date decoder; the extractors, canonicaliser, dedup and metrics beyond the word count are not built.
+> - **Phase 1.5:** done in full by the step 2 to 5b scripts (keyphrases, embeddings, clustering, naming, topic grouping, draft, human review, freeze as taxonomy v1), without seed matching and without a discovery report.
+> - **Phase 2:** done in prototype form: the Ollama call with a JSON schema, rubrics, the two-call classifier with the enum of all subtopics, the validator with one retry, time, alignment and confidence scoring, the cache key and the resumable run. Not built: embeddings client use at classification time, shortlist, vector store, `doctor`, runner and rate limiting.
+> - **Phase 3 (plan):** Library and Review tabs and CSV/JSON in chat 3; Planner, Insights, Runs and Obsidian/Notion in chat 4.
+> - **Phase 4 (partly done):** a 30-post gold set with a comparison script instead of 100 items; few-shot and weight tuning are not built.
+> - **Phase 5:** nothing started.
+
 ---
 
 ## 22. Local LLM runtime (Ollama)
@@ -1703,6 +1869,8 @@ total = N_items × cost_per_item × (1 + retry_rate + escalation_rate × price_r
 | GPU | NVIDIA RTX, **6 GB VRAM** | Q4 models up to ~8B run almost entirely on the GPU; 12–14B split between GPU and RAM (slower) |
 | Storage | 512 GB SSD | Room for many models (each is ~0.3–9 GB) |
 
+> 🛠️ **Prototype note.** The real machine matches this profile: RTX 4050 laptop GPU with 6 GB VRAM, 16 GB RAM, Windows with PowerShell, conda environment `lisc_env` (Python 3.11).
+
 ### 22.2 Model roster
 
 | Role | Ollama tag | Size (Q4) | Placement on 6 GB | Rough speed / item |
@@ -1716,6 +1884,18 @@ total = N_items × cost_per_item × (1 + retry_rate + escalation_rate × price_r
 | Embedding upgrade | `qwen3-embedding:0.6b`, `embeddinggemma` | ~0.6 GB | GPU | ms |
 
 > Tags and sizes change with releases; confirm them in the Ollama library before pulling. Speeds are estimates, so measure them with `lisc stats`.
+
+> 🛠️ **Prototype note: the measured roster (this replaces the estimates above).** Two calls per post on the 30 gold posts, rubrics v2, structured output with `think: false`:
+>
+> | Model | Time per post | Notes |
+> |---|---|---|
+> | **`gemma4:e4b`** ⭐ | **13.5 s** (about 2.5 h for 673) | **Approved for the full run.** 1 retry in 30 posts, summaries about 78 words; content type 26 of 29, difficulty 17 of 30 exact and 30 of 30 within one, subtopic 13 of 30, topic 17 of 30 |
+> | `qwen3.5:4b` | 18.5 s | Fallback. Needs `--presence-penalty 0` |
+> | `qwen3.5:9b` | 71.1 s | Too slow for the full run |
+> | `qwen3:latest` | 65 to 96 s | Only 37% CPU / 63% GPU at 6.6 GB, so it spills out of the GPU |
+> | `gemma4:12b` | 7.85 tokens per second | Gold set only, too slow for 673 posts |
+>
+> Other models in use: `qwen3` for keyphrases (about 2.8 s per post, 673 posts in about 30 minutes) and for placing clusters on topics, `gemma3:12b` for proposing the topic list (about 200 s, once), and `nomic-embed-text` for embeddings. Notes that differ from the text above: the model that this document calls `qwen3:8b` is the `qwen3` tag installed locally (`qwen3:latest`); `ollama ps` **under-reports** the memory use of Gemma 4, so judge placement by speed; the `qwen3.5` models need `--presence-penalty 0`; and there is no escalation tier (no `qwen3:14b`). The decision to compare `qwen3` against `gemma` on the gold set was carried out, and the winner kept is `gemma4:e4b` (fallback `qwen3.5:4b`).
 
 **Selection notes**
 - **Llama:** no newer Llama exists at this size (Llama 4 models are far too large, and Llama 3.2 comes only in 1B and 3B). `llama3.1:8b` works but is an older generation.
@@ -1753,11 +1933,15 @@ class OllamaClient(LLMClient):
 - **6 GB GPU tuning:** `num_ctx 8192`, `concurrency.llm: 1`, thinking off for bulk, and close GPU-heavy apps. Check placement with `ollama ps` (aim for ≈ 100% GPU on the 8B model).
 - **Embedding consistency:** one embedding model for items, taxonomy and examples. The `embeddings` table stores `model`, and `lisc doctor` blocks runs on a mismatch.
 
+> 🛠️ **Prototype note.** `ollama_json.py` is a plain HTTP call to `/api/chat` with the JSON schema as `format`, `think` false, temperature 0, `keep_alive`, a fixed `num_predict` of 1500 and an optional options dictionary (used for `presence_penalty`). The context is 8,192 tokens. Runs are done model by model (never alternating). There is no `OllamaClient` class, no `/api/embed` batching beyond the embedding script, no `doctor` check, and no timeout on the call (open item 45).
+
 ### 22.4 Tools and web access
 
 - Model files (Qwen3, Llama, Gemma) are **pure text generators**. "Tool-calling support" means they can *emit* a tool request; the calling app executes it.
 - Ollama by default runs no tools. Its optional web search is a **cloud** feature, and is disabled for this project.
 - The classifier sends **no `tools`** in its requests. Content is fetched and cleaned beforehand by `extract/`, so prompt injection inside a post can at worst produce a wrong label, which the validator and review queue catch.
+
+> 🛠️ **Prototype note.** Holds as written. The prototype's requests carry no tools, the post text is read from the CSV (no extractors exist), and the answer schema limits what a prompt injection can change to the label values.
 
 ### 22.5 Local privacy checklist
 
@@ -1774,6 +1958,8 @@ class OllamaClient(LLMClient):
 | 9 | Optional air-gap: pull models, then firewall-block Ollama | Stops update checks and registry calls |
 
 `lisc doctor` automates checks 1, 2 and 5.
+
+> 🛠️ **Prototype note.** Checks 1 to 9 are manual in the prototype (there is no `doctor`). Dependencies are listed in a single `requirements.txt` rather than pinned with `uv.lock`. Check 5 applies to the folders `input-data/` and `gold/`, which hold post text: keep the repository outside any synced folder. Check 8 does not apply yet because the prototype fetches nothing from the internet.
 
 ---
 

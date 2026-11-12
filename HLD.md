@@ -10,6 +10,8 @@
 | **Companion docs** | [`LLD.md`](./LLD.md) (the "how", in detail) · [`README.md`](./README.md) (how to use it) |
 | **Status** | Proposed architecture, v1.0 |
 
+> 🛠️ **Prototype status (2026-11-12, end of chat 2 of 4).** This document describes the **target product**. A working prototype of the classification core already exists and is described in blocks marked **🛠️ Prototype note**. In short: 674 captured posts (673 with text) have a frozen taxonomy (13 topics, 37 subtopics), a two-call local classifier (`gemma4:e4b`, about 13.5 s per post) and a 30-post hand-labelled test set; everything runs as scripts and JSONL files, with no database, no dashboard and no `lisc` command yet. Accuracy so far is below the targets for topic and subtopic and meets them for difficulty and content type (see §11). The plan is four chats in total with the full dashboard: chat 3 runs all posts and builds the SQLite loader plus the Library and Review tabs; chat 4 adds the Planner, Insights and Runs tabs, the Obsidian and Notion exports and a last alignment of these documents (see §13). The full record is in `design/project-log.md`. Note that the companion link `LLD.md` is stored in two files, `LLD-part-1.md` (sections 1 to 8) and `LLD-part-2.md` (sections 9 to 22).
+
 ---
 
 ### 📑 Table of Contents
@@ -92,6 +94,11 @@ confidence: 0.91   # how sure the system is
 > [!TIP]
 > Topics and subtopics come from a **fixed, editable list** (the *taxonomy*). The AI picks from that list instead of inventing new labels, so your library stays tidy and consistent.
 
+> 🛠️ **Prototype note: what the lenses mean in the prototype.** All seven lenses are produced. Three of them have a different meaning from the table above:
+> - **Time (4a, 4b):** the prototype times **the resource the post advertises** (a course, a repo, a guide), using only what the post says about its size, and falls back to the post's own reading time when the post says nothing. Each time carries a `basis` (`stated_in_post`, `estimated_from_post` or `post_only`). About 87% of the gold-set posts are `post_only`, so for most posts the time is a reading time plus a fixed hands-on allowance. No link is ever opened, so linked material is not measured.
+> - **Confidence** is built differently (see §7.3) and does not yet separate good from bad labels well enough at the default threshold.
+> - **Subtopic:** the taxonomy has 37 subtopics under 13 topics (plus "Other"), and neighbouring subtopics overlap, which limits accuracy (see §11).
+
 ---
 
 ## 3. 🎯 Goals and non-goals
@@ -110,6 +117,8 @@ confidence: 0.91   # how sure the system is
 - Not a multi-user SaaS product. It's built for **one person's own saved items**.
 - 🔄 **No automated access to linkedin.com at all**, whether logged in or logged out: no bots, scrapers, auto-scrollers or automatic page saving. LinkedIn's User Agreement prohibits automated scraping. The only things that touch LinkedIn are things *you* do by hand (requesting the export, scrolling and saving your Saved page). See [§4.1](#41--getting-your-saved-posts-in-without-automating-linkedin).
 - No video or audio transcription in v1 (planned as a later add-on).
+
+> 🛠️ **Prototype note.** G3 and G4 hold completely (all models run locally, zero cost per post). G1 is not yet met for topic (57%) and subtopic (43%) on the 30-post test set; G2 holds (temperature 0, fixed answer lists, a cache key that changes when anything changes). G5 and G7 are the work of chats 3 and 4. The no-LinkedIn rule is respected by every script. A link fetcher for the pages that posts point to is deliberately not built.
 
 ---
 
@@ -156,6 +165,8 @@ flowchart LR
 
 **In one sentence:** *collect* your saved items, *prepare* clean text, let an AI *understand* them against a fixed topic list, *remember* the results, and *use* them through a dashboard, a review screen and exports.
 
+> 🛠️ **Prototype note: the pipeline as built.** Today the pipeline is: the export CSV and the saved-page captures are merged by activity ID into one file (`posts_with_save_dates.csv`) → the classifier reads that file → **two** local model calls per post (call A picks the subtopic from all 37 plus "Other"; call B fills in the remaining lenses) → the code validates the answers, does all the arithmetic and computes the confidence → one JSON line per post is written to a file. The stations that differ from the diagram: no manual list, no external-link fetching, no de-duplication, no shortlist (the whole taxonomy fits in the prompt), no database and no vector index (chat 3 adds SQLite), and no dashboard, review queue or exports yet (chats 3 and 4).
+
 ### 4.1 🆕 Getting your saved posts in, without automating LinkedIn
 
 **The constraint:** LinkedIn has no API for saved items, and its User Agreement prohibits bots, scrapers and browser extensions that copy content. That covers logged-in *and* logged-out fetching, auto-scrolling and automatic screenshots or page saves. So the tool **never opens linkedin.com**. It works only on files you produce by hand.
@@ -195,11 +206,15 @@ flowchart LR
 
 **Partial runs are fine.** You don't have to capture all 4,300 posts before starting. Classify what's captured (e.g. the most recent year), and add older captures later: already-processed posts are cached and skipped, and new themes enter through the topic-growth step ([§7.4](#74--building-the-topic-list-from-your-own-data-phases-a--b--c), Phase C).
 
+> 🛠️ **Prototype note.** This is exactly how the prototype's data was made, as a partial run: **674 posts** were captured by hand and merged with the export by two scripts (`parse_saved.py`, `merge_export.py`), giving `posts_with_save_dates.csv` with 673 posts that have text (one post is only an attachment title). The remaining export rows are "not yet captured". Of the 333 posts that contain links, 326 use `lnkd.in` and 7 are plain links, and 70 posts have an attachment title; none of these links is followed. Adding older captures later works as described: new posts are classified and the old ones are skipped by the cache.
+
 ---
 
 ## 5. 🧱 The building blocks
 
 Click any block to expand it.
+
+> 🛠️ **Prototype note: which blocks exist.** Built (as scripts): the capture and export collectors (blocks 1, offline files only), the classifier (block 6), the validator and confidence scorer (block 7), and the taxonomy discovery of §7.4. Built only in part: the extractor (block 2: post text only), the measurer (block 4: word count only). Not built yet: the cleaner and de-duplicator (block 3), the topic shortlister (block 5, not needed with 37 subtopics), storage (block 8: JSONL files for now, SQLite in chat 3) and the dashboard, review screen and exports (block 9: chats 3 and 4).
 
 <details>
 <summary><b>1️⃣ Collectors: getting your saved items in</b></summary>
@@ -337,6 +352,8 @@ stateDiagram-v2
     Failed --> Discovered: retry
 ```
 
+> 🛠️ **Prototype note.** In the prototype the "one structured call" is **two calls** (A: subtopic with an evidence quote, B: all other lenses), there is no shortlister and no database, and a post's progress is tracked by its line in the output file: a run that stops can be restarted and skips the posts already done (resume by cache key). A post that fails goes to a separate failures file. The status machine above arrives with SQLite in chat 3.
+
 ---
 
 ## 7. 🧠 How the "smart" part works
@@ -362,6 +379,8 @@ The tree lives in a simple editable file. Changing it creates a **new taxonomy v
 > [!IMPORTANT]
 > You don't have to write this tree from scratch, or guess what you've saved. The first version is **discovered from your own saved items** and then approved by you. See [§7.4](#74--building-the-topic-list-from-your-own-data-phases-a--b--c).
 
+> 🛠️ **Prototype note.** The tree above is an illustration. The real, frozen `taxonomy.v1` (fingerprint `3baa2b81d347`) has **13 topics and 37 subtopics** plus "Other" (43 posts). Largest topics: RAG (110 posts), LLM Architecture (105), AI Agent Development (102), AI Engineering Practices (77), Career Development (66). A change makes a new file (`taxonomy.v2.yaml`); results record the taxonomy fingerprint they were made with.
+
 ### 7.2 Each lens has a rule, not just a guess
 
 | Lens | How it's decided |
@@ -377,6 +396,13 @@ The tree lives in a simple editable file. Changing it creates a **new taxonomy v
 > [!NOTE]
 > Splitting the alignment score into sub-criteria with a fixed formula makes it **explainable**: you can see *why* something scored 8.7 and not 6.
 
+> 🛠️ **Prototype note: how each lens is decided today.**
+> - **Topic / Subtopic:** the model picks one of the 37 subtopic ids (or "Other") through an answer list it cannot leave; the topic follows from the subtopic. No shortlist.
+> - **Difficulty and content type:** model plus the written rubrics (`rubrics.v2.yaml`); the content-type rules are checked in order from the first.
+> - **Time:** the model reports what the post states about the resource size (count and unit) and a rough estimate; **the code does all the arithmetic**, converting units (minute 1, hour 60, week 300, question 3 minutes) and applying fixed hands-on floors (tutorial 0, mini-project 45, full project 180 minutes). The "within limits" adjustment applies only when the post says nothing about the size.
+> - **Alignment:** as designed: six sub-scores from the model, a weighted total computed in code.
+> - **Summary:** one paragraph, judged in words (target 60 to 150, hard limits 30 to 220).
+
 ### 7.3 Confidence
 
 Every result gets a **confidence score (0–1)** built from:
@@ -385,6 +411,8 @@ Every result gets a **confidence score (0–1)** built from:
 3. whether validation passed on the first try.
 
 Results below the threshold (default 0.6) go to review.
+
+> 🛠️ **Prototype note: confidence in practice.** The three parts are weighted 0.45 (model certainty), 0.35 (agreement) and 0.20 (validity). Because there is no shortlist, "agreement" is measured against the **clustering's subtopic** (1.0 same subtopic, 0.7 same topic, 0.4 otherwise); partial text counts ×0.7 and some warnings subtract 0.1. Measured on the gold set: the model's own certainty is nearly the same for every post, and with the default threshold of 0.6 almost nothing is sent to review. With `gemma`, a threshold of 0.9 sends about half of the posts to review and catches 13 of the 17 wrong subtopics. The threshold (or the formula) is therefore to be re-tuned on the full run in chat 3, together with the Review tab.
 
 ### 7.4 🔎 Building the topic list from your own data (Phases A → B → C)
 
@@ -427,6 +455,8 @@ flowchart LR
 - **Only topics are discovered.** Difficulty, content type, time and the AI-Engineer score have universal definitions, so their rubrics stay predefined.
 - **Cost:** keyphrases come from one tiny LLM call per item. Clustering runs locally and is free.
 
+> 🛠️ **Prototype note: Phases A and B as built (chat 1).** 673 posts → keyphrases from `qwen3` (about 30 minutes in total) → embeddings from the keyphrases only (`nomic-embed-text`, format words such as "interview" or "guide" removed so that subject, not format, drives the clusters) → UMAP and HDBSCAN with a second pass that rescues small real topics from the noise → **37 clusters** and 43 noise posts → topic list proposed by `gemma3:12b`, each cluster placed on a topic by `qwen3` through an answer list → **you edited the draft** (moved three clusters, added two topics) → `step5b_finalize.py` checked and froze `taxonomy.v1`. There was no seed list. **Phase C is not built**; the 43 posts in "Other" and the overlap between neighbouring subtopics are the open question for a possible v2.
+
 ---
 
 ## 8. 🔁 Keeping quality high: the feedback loop
@@ -445,6 +475,8 @@ flowchart LR
 
 - **Learn by example:** your corrections are stored. When a *similar* new item arrives, the most similar corrections are shown to the AI as examples (few-shot learning). No model training is needed.
 - **Measure, don't guess:** a small labelled test set (start with ~100 items) is used to score every change to prompts, models or the taxonomy *before* it's adopted.
+
+> 🛠️ **Prototype note.** The "measure" half exists: a **30-post test set** labelled by you, with 19 labels questioned and re-decided in a review pass, and a script that scores any run against it (`step10_compare.py`). Every change in chat 2 (rubrics v2, the prompt version, model choice) was measured this way. The "learn" half (review queue, saved corrections, examples in the prompt) is not built: chat 3 builds the Review tab, chat 4 uses the corrections as examples.
 
 ---
 
@@ -466,6 +498,8 @@ flowchart TB
     Core -. "HTTPS (optional)" .-> LLM["☁️ LLM API<br/>(Claude / OpenAI)"]
     Core -. "or" .-> Local["🖥️ Local LLM (Ollama)"]
 ```
+
+> 🛠️ **Prototype note.** The prototype runs in the **fully offline** mode: Windows laptop, PowerShell, a conda environment, Ollama on localhost. No cloud API, server mode or Docker is used or planned for chats 3 and 4.
 
 ### 9.1 🦙 Recommended fully local setup (Ollama)
 
@@ -502,6 +536,7 @@ flowchart LR
 > [!NOTE]
 > **Local models have no tools or web access of their own.** A model file is a pure text generator. "Tool calling" support only means it can *request* a tool; an app must run it. The classifier is deliberately **tool-free**: the app fetches and cleans the content first, and the model only returns labels.
 
+> 🛠️ **Prototype note: the models picked by evidence (chat 2).** Several models were run on the 30 gold posts with two calls per post. **`gemma4:e4b` won** and is approved for the full run: **13.5 s per post, about 2.5 hours for 673 posts**, 1 retry in 30 posts, content type 26 of 29 right, difficulty 30 of 30 within one level (17 exact), subtopic 13 of 30, topic 17 of 30. Others: `qwen3.5:4b` 18.5 s (the fallback; it needs `--presence-penalty 0`), `qwen3.5:9b` 71.1 s, `qwen3:latest` 65 to 96 s (it does not fit the 6 GB GPU well), `gemma4:12b` about 7.85 tokens per second (gold set only). The diagram's `qwen3:14b` escalation tier is not used. `qwen3` still does the keyphrases and cluster placement, `gemma3:12b` proposed the topic list once, and `nomic-embed-text` makes the embeddings. Before the long run, switch off sleep on the laptop.
 
 ---
 
@@ -529,6 +564,18 @@ flowchart LR
 | 🆕 Does the classifier get tools or web access? | **No, tool-free** | Give it search or fetch tools | Tools aren't needed (content is fetched beforehand), and without them a malicious post can at worst cause a wrong label |
 </details>
 
+> 🛠️ **Prototype note: decisions that changed or were added in the build.**
+>
+> | Decision | As built | Why |
+> |---|---|---|
+> | One call or seven? | **Two calls per post** (A: subtopic with an evidence quote; B: everything else) | A short, narrow first call is easier for a small model; still far cheaper than seven calls |
+> | Topic choice | **All 37 subtopics in an enum, no shortlist** | The taxonomy fits in the prompt; clustering gives one subtopic, not a ranked list |
+> | Time estimates | **Time of the resource the post advertises, from what the post states; code does the arithmetic** (user decision, 2026-11-09) | Models multiply badly; most posts state nothing, so `post_only` is common and honest |
+> | Default LLM | **`gemma4:e4b`** for the full run (fallback `qwen3.5:4b`), chosen by measurement | Fastest of the models that scored well; replaces `qwen3:8b` as the planned default |
+> | Rubrics | **v2** (`fdab10ef08be`), v1 kept for traceability | Three targeted fixes after the first gold-set run |
+> | Dashboard | **Full dashboard is the main deliverable; four chats in total** (user decision) | The library is only useful if it can be browsed, reviewed and planned from |
+> | Link fetching | **None for now** | 326 of 333 posts with links use `lnkd.in`, which must never be followed |
+
 ---
 
 ## 11. 📐 Quality attributes
@@ -542,6 +589,23 @@ flowchart LR
 | **Privacy** | Data never leaves your machine except the LLM call (and not even that in offline mode) | Local-first design, secrets in `.env` |
 | **Reliability** | No item silently lost | Status machine, retries, resumable runs, run logs |
 | **Explainability** | Every label has a reason | Model returns short rationales and sub-scores |
+
+> 🛠️ **Prototype note: where the prototype stands against the targets.** Measured on the 30 gold posts with `gemma4:e4b` and your reviewed labels.
+>
+> | Attribute | Target | Measured | Status |
+> |---|---|---|---|
+> | Topic accuracy | ≥ 85% | 17 of 30 (57%) | below |
+> | Subtopic accuracy | ≥ 70% | 13 of 30 (43%) | below |
+> | Difficulty within ±1 | ≥ 90% | 30 of 30 (100%), exact 17 of 30 | met |
+> | Content type | ≥ 85% | 26 of 29 (90%) | met |
+> | Alignment error | ≤ 1.5 | not measured (no labels) | open |
+> | Review rate | ≤ 25% | the default rule flags almost nothing; a stricter threshold flags about half | open (§7.3) |
+> | Speed | < 15 min for 500 items (cloud) | local: 13.5 s per post, about 2.5 h for 673 | different premise |
+> | Cost | about one cheap call | two local calls, no money cost | met |
+> | Re-runs | unchanged items cost zero | cache key plus resume work | met |
+> | Privacy | nothing leaves the machine | fully local | met |
+>
+> **Reading the numbers with care:** the test set is small (30), and some fixes were chosen after looking at these same posts, so the figures are optimistic. Seven of the thirty posts are never right in any run, which points at overlapping subtopics in the taxonomy rather than at the models. Whether to rework the taxonomy (v2) is an open decision for chat 3.
 
 ---
 
@@ -563,6 +627,18 @@ flowchart LR
 | 🆕 Topic list guessed wrong at the start | Empty topics, missing themes | Phase A discovery from your data + Phase C evolution |
 | 🆕 "Local = 100% private" assumed blindly | Leaks via an exposed Ollama port, Ollama cloud models, synced folders or a stolen laptop | Local privacy checklist (README): bind to `127.0.0.1`, local models only, keep `data/` out of synced folders, enable disk encryption |
 | 🆕 Smaller local models judge less finely | Slightly weaker difficulty and score labels | Escalate low-confidence items to `qwen3:14b`, use few-shot corrections, compare models on the gold set |
+
+> 🛠️ **Prototype note: risks seen in practice (chat 2).**
+>
+> | Risk | What happened | Handling |
+> |---|---|---|
+> | Overlapping subtopics | 7 of 30 gold posts are never right in any run; neighbours such as the agent subtopics overlap | Open decision on a taxonomy v2; the Review tab collects corrections |
+> | Confidence does not separate good from bad | The default threshold flags almost nothing | Re-tune on the full run (chat 3) |
+> | Over-optimistic test numbers | 30 posts, fixes chosen after seeing them | Larger test set from the Review tab corrections |
+> | Stalled model call | One call hung for about 22 minutes, most likely the laptop sleeping; there is no per-call timeout | Switch off sleep for long runs; add a timeout (open item) |
+> | Time estimates rest on thin information | About 87% of gold posts say nothing about the resource size | Honest `basis` stored per result; a link fetcher is out of scope for now |
+> | Repeated reposts inflate clusters | No de-duplication yet | Open item; each repost is classified on its own |
+> | Local model quirks | `qwen3.5` models need `--presence-penalty 0`; `ollama ps` under-reports Gemma 4 memory | Documented; options stored in the cache key |
 
 ---
 
@@ -589,6 +665,20 @@ flowchart LR
 | 4 | Accuracy numbers are reported for every prompt or model change |
 | 5 | Optional extras, one at a time |
 
+> 🛠️ **Prototype note: where each phase stands, and how it maps to the four chats (2026-11-12).**
+>
+> | Phase | Status | Chat |
+> |---|---|---|
+> | 0 Foundations | Not as designed: no `lisc init`, config file or database. Scripts, rubrics and taxonomy files, tests and CI exist | chat 3 adds SQLite; the `lisc` package layout is left for later |
+> | 1 Collect & Extract | Done for posts as scripts (export plus captures merged by activity ID, 674 posts); no extractors beyond post text, no de-duplication | done before the classifier work |
+> | 1.5 Discover topics | **Done**: reviewed by you and frozen as `v1` (13 topics, 37 subtopics) | chat 1 |
+> | 2 Classify | **Prototype done**: rubrics v2, two-call classifier, validation, scoring, cache and resume; the full 673-post run is next | chat 2 built it; chat 3 runs it on all posts |
+> | 3 Use | Not started | chat 3: SQLite loader, Library and Review tabs, CSV and JSON export; chat 4: Planner, Insights, Runs, Obsidian and Notion |
+> | 4 Measure & Learn | Partly: a 30-post test set and a scoring script exist; no few-shot loop | chats 3 and 4: corrections from the Review tab become examples and a larger test set |
+> | 5 Extras | Not started, and mostly not planned (a link fetcher, server mode, OCR, video) | later |
+>
+> **Chat 3 (Steps 13 to 18)** and **chat 4** are described in `design/handoff-chat-2-to-3.md`. Chat 4 ends with the final checks and a last alignment of these design documents.
+
 ---
 
 ## 14. 📖 Glossary
@@ -614,6 +704,17 @@ flowchart LR
 | **Export CSV** | `Saved Items.csv` from LinkedIn's data download: one row per saved post (URL + save date), no content |
 | **Saved-page capture** | A copy of your Saved posts page that you make with Ctrl+S while scrolling. Its frame file `saved_resource(N).html` holds the post cards |
 | **Coverage** | How many export rows have captured content, e.g. "674 of 4,300" |
+
+> 🛠️ **Prototype note: terms used in the build.**
+>
+> | Term | Meaning |
+> |---|---|
+> | **Basis** | Where a time estimate comes from: `stated_in_post`, `estimated_from_post` or `post_only` |
+> | **Rubrics fingerprint** | Short hash of the rubrics file (v2 is `fdab10ef08be`); part of the cache key |
+> | **Taxonomy fingerprint** | Short hash of the frozen taxonomy (v1 is `3baa2b81d347`) |
+> | **Prompt version** | Label of the prompt text (now `classify-2026.11.3`) |
+> | **JSONL** | A text file with one JSON record per line; the prototype's output format |
+> | **Mutation check** | A test-of-the-tests: change the code on purpose and confirm the tests fail |
 
 ---
 
