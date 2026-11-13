@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -55,6 +56,7 @@ class FakeOllama(ThreadingHTTPServer):
         self.requests = []
         self.mode = "ok"                    # ok | missing_model
         self.fail_marker = None             # posts containing this text get unusable answers
+        self.delay = 0                      # seconds to wait before answering (to test the timeout)
 
     @property
     def url(self):
@@ -68,6 +70,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.server.requests.append(payload)
+        if self.server.delay:
+            time.sleep(self.server.delay)
         if self.server.mode == "missing_model":
             self.send_response(404)
             self.end_headers()
@@ -80,11 +84,14 @@ class Handler(BaseHTTPRequestHandler):
             content = json.dumps(ANSWER_A if is_a else ANSWER_B)
         body = json.dumps({"message": {"content": content}, "done_reason": "stop",
                            "prompt_eval_count": 50, "eval_count": 10}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):      # the client gave up (timeout test)
+            pass
 
 
 @pytest.fixture
@@ -295,3 +302,130 @@ def test_script_runs_from_the_command_line(tmp_path):
                         "--taxonomy", str(tmp_path / "no.yaml"), "--assignments", str(tmp_path / "no2.csv")],
                        capture_output=True, text=True)
     assert r.returncode == 2 and "cannot read" in r.stdout
+
+
+# ------------------------------------------------------------ Step 13: --num-predict, --timeout, --review-rule
+
+def test_default_answer_lengths(files, server):
+    S.main(argv(files, server, "--limit", "1"))
+    first, second = server.requests[:2]
+    assert "evidence" in first["format"]["properties"] and first["options"]["num_predict"] == 400
+    assert "evidence" not in second["format"]["properties"] and second["options"]["num_predict"] == 1500
+
+
+def test_num_predict_sets_the_limit_for_both_questions(files, server):
+    S.main(argv(files, server, "--limit", "1", "--think", "--num-predict", "4000"))
+    assert [r["options"]["num_predict"] for r in server.requests[:2]] == [4000, 4000]
+
+
+def test_the_num_predict_option_does_not_redo_finished_posts(files, server):
+    S.main(argv(files, server))
+    server.requests.clear()
+    assert S.main(argv(files, server, "--num-predict", "4000", "--timeout", "10")) == 0
+    assert server.requests == [] and len(rows(files / "out.jsonl")) == 3
+
+
+@pytest.mark.parametrize("option,value", [("--num-predict", "0"), ("--num-predict", "-3"), ("--num-predict", "abc"),
+                                          ("--num-predict", "1.5"), ("--timeout", "0"), ("--timeout", "x")])
+def test_bad_limits_are_refused_before_anything_runs(files, server, capsys, option, value):
+    with pytest.raises(SystemExit) as exit_info:
+        S.main(argv(files, server, option, value))
+    assert exit_info.value.code == 2 and server.requests == []
+    assert option in capsys.readouterr().err
+
+
+def test_a_timed_out_post_is_recorded_not_retried_and_the_run_moves_on(files, server, capsys):
+    server.delay = 2
+    assert S.main(argv(files, server, "--limit", "1", "--timeout", "1")) == 1
+    assert len(server.requests) == 1                               # no second try
+    failures = rows(files / "out.jsonl.failures.jsonl")
+    assert len(failures) == 1 and failures[0]["activity_id"] == 1
+    assert failures[0]["error"].startswith("timeout: No answer within 1 seconds")
+    assert not (files / "out.jsonl").exists()
+    out = capsys.readouterr().out
+    assert "FAILED: timeout" in out and "1 failed" in out
+
+
+def test_a_timed_out_post_is_done_on_the_next_run(files, server):
+    server.delay = 2
+    S.main(argv(files, server, "--limit", "1", "--timeout", "1"))
+    server.delay = 0
+    assert S.main(argv(files, server)) == 0
+    assert [r["activity_id"] for r in rows(files / "out.jsonl")] == [1, 2, 4]
+
+
+def test_records_carry_the_review_fields_and_the_summary_names_the_reasons(files, server, capsys):
+    # the fake model always answers rag.chunking: post 2 is clustered as careers, so it disagrees
+    assert S.main(argv(files, server)) == 0
+    by_id = {r["activity_id"]: r for r in rows(files / "out.jsonl")}
+    assert by_id[1]["needs_review"] is False and by_id[1]["review_reasons"] == []
+    assert by_id[2]["needs_review"] is True
+    assert by_id[2]["review_reasons"] == ["low_confidence", "topic_disagrees_with_clustering"]
+    assert by_id[2]["review_rule_version"] == "v1" and len(by_id[2]["review_rule_sha"]) == 64
+    out = capsys.readouterr().out
+    assert "Needs review: 1 (low_confidence 1, topic_disagrees_with_clustering 1)." in out
+
+
+def test_a_custom_review_rule_file_is_used(files, server, capsys):
+    rule_file = files / "rule.yaml"
+    rule_file.write_text("version: strict\nconfidence_below: 1.0\nother_general: true\n"
+                         "topic_disagrees_with_clustering: false\n", encoding="utf-8")
+    assert S.main(argv(files, server, "--review-rule", str(rule_file))) == 0
+    recs = rows(files / "out.jsonl")
+    assert all(r["needs_review"] and r["review_reasons"] == ["low_confidence"] for r in recs)
+    assert {r["review_rule_version"] for r in recs} == {"strict"}
+    assert "Needs review: 3 (low_confidence 3)." in capsys.readouterr().out
+
+
+def test_no_reasons_text_when_nothing_is_flagged(files, server, capsys):
+    rule_file = files / "rule.yaml"
+    rule_file.write_text("version: lax\nconfidence_below: 0\nother_general: false\n"
+                         "topic_disagrees_with_clustering: false\n", encoding="utf-8")
+    assert S.main(argv(files, server, "--review-rule", str(rule_file))) == 0
+    assert "Needs review: 0. Time basis:" in capsys.readouterr().out
+
+
+def test_the_review_rule_does_not_redo_finished_posts(files, server):
+    S.main(argv(files, server))
+    rule_file = files / "rule.yaml"
+    rule_file.write_text("version: lax\nconfidence_below: 0\nother_general: false\n"
+                         "topic_disagrees_with_clustering: false\n", encoding="utf-8")
+    server.requests.clear()
+    assert S.main(argv(files, server, "--review-rule", str(rule_file))) == 0
+    assert server.requests == []
+
+
+def test_a_bad_review_rule_stops_the_run(files, server, capsys):
+    bad = files / "rule.yaml"
+    bad.write_text("version: v1\nconfidence_below: 5\n", encoding="utf-8")
+    assert S.main(argv(files, server, "--review-rule", str(bad))) == 2
+    out = capsys.readouterr().out
+    assert "review rule problems" in out and "confidence_below" in out and server.requests == []
+
+
+def test_a_missing_review_rule_file_stops_the_run(files, server, capsys):
+    assert S.main(argv(files, server, "--review-rule", str(files / "nope.yaml"))) == 2
+    assert "cannot read" in capsys.readouterr().out and server.requests == []
+
+
+def test_positive_int_helper():
+    import argparse
+    assert S.positive_int("7") == 7
+    for bad in ("0", "-1", "x", "2.5", ""):
+        with pytest.raises(argparse.ArgumentTypeError):
+            S.positive_int(bad)
+
+
+def test_default_timeout_is_300_seconds_and_the_option_overrides_it(files, server):
+    seen = []
+
+    def chat(model, system, user, schema, **kw):
+        seen.append(kw["timeout"])
+        answer = ANSWER_A if "evidence" in schema["properties"] else ANSWER_B
+        return answer, {"seconds": 1.0, "prompt_tokens": 1, "output_tokens": 1}
+
+    S.main(argv(files, server, "--limit", "1"), chat=chat)
+    assert seen == [300, 300]
+    seen.clear()
+    S.main(argv(files, server, "--limit", "1", "--timeout", "45", out="o2.jsonl"), chat=chat)
+    assert seen == [45, 45]

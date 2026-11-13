@@ -13,7 +13,7 @@ MUTATIONS = [
     ("read_done_keys: stray lines crash it", "except (json.JSONDecodeError, KeyError, TypeError):", "except json.JSONDecodeError:"),
     ("append_line: torn last line not separated", "needs_newline = path.exists() and path.stat().st_size > 0 and not path.read_bytes().endswith(b\"\\n\")", "needs_newline = False"),
     ("append_line: non-ASCII escaped", "ensure_ascii=False", "ensure_ascii=True"),
-    ("main: input errors not caught", "except (R.RubricsError, I.InputError) as exc:", "except R.RubricsError as exc:"),
+    ("main: input errors not caught", "except (R.RubricsError, RV.ReviewRuleError, I.InputError) as exc:", "except (R.RubricsError, RV.ReviewRuleError) as exc:"),
     ("main: unknown ids ignored", "        if missing:\n", "        if False:\n"),
     ("main: --limit ignored", "if args.limit is not None:", "if False:"),
     ("main: finished posts redone", "todo = [p for p in posts if C.cache_key(p, ctx) not in done]", "todo = list(posts)"),

@@ -21,9 +21,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import review_rule as RV
 import scoring
 from classify_inputs import OTHER_ID, Post, Taxonomy
-from ollama_json import OLLAMA_URL, LLMError, OllamaUnavailable, chat_json
+from ollama_json import OLLAMA_URL, LLMError, LLMTimeout, OllamaUnavailable, chat_json
 from rubrics import (ALIGNMENT_IDS, BASIS_IDS, CONTENT_TYPE_IDS, DIFFICULTY_IDS, STATED_UNIT_IDS,
                      Rubrics)
 
@@ -31,13 +32,19 @@ PROMPT_VERSION = "classify-2026.11.3"       # a human label; the real guard is p
 
 # Confidence (LLD 9.5, reworked: there is no embedding shortlist, so the "agreement" part compares
 # the model's subtopic with the one clustering gave the post). Starting values, to be calibrated
-# on the gold set in Step 10.
+# on the gold set in Step 10. The review threshold used to live here (review_below 0.60); since
+# Step 13 the whole review rule is in rubrics/review_rule.v1.yaml (see review_rule.py).
 CONFIDENCE = {
     "w_self": 0.45, "w_agree": 0.35, "w_valid": 0.20,
     "agree_same_subtopic": 1.0, "agree_same_topic": 0.7, "agree_other": 0.4,
     "valid_first_try": 1.0, "valid_after_retry": 0.7,
-    "partial_factor": 0.7, "warning_penalty": 0.1, "review_below": 0.60,
+    "partial_factor": 0.7, "warning_penalty": 0.1,
 }
+
+# Defaults for how long the model may write and how long we wait for it (Step 13 makes them options)
+NUM_PREDICT_A = 400                         # call A: a subtopic id and one sentence
+NUM_PREDICT_B = 1500                        # call B: everything else
+TIMEOUT_SECONDS = 300                       # one call; a normal post takes about 13 s with gemma4:e4b
 # Warnings that lower confidence (repairs are not here: a retry already lowers c_valid)
 PENALISED_WARNINGS = {"full_project_short_understand", "news_hard", "stated_size_not_in_post",
                       "summary_short", "summary_missing"}
@@ -282,11 +289,10 @@ def check_b(answer: Any, rub: Rubrics) -> tuple[list[str], list[str]]:
     if answer["stated_count"] < 0:
         soft.append("stated_count must be 0 or more")
     soft.extend(_summary_problems(answer["summary"], rub))
-    has_size = answer["stated_size"].strip() != ""
-    if answer["basis"] == "stated_in_post" and not has_size:
-        soft.append("basis is stated_in_post but stated_size is empty: copy the post's words, or choose another basis")
-    if answer["basis"] != "stated_in_post" and has_size:
-        soft.append("stated_size is filled in but basis is not stated_in_post")
+    # Step 13: a basis that does not match stated_size is NOT a reason to ask again. repair_b fixes
+    # both cases in code ("repaired:basis" / "repaired:stated_size"), and in the gold-set runs the
+    # second answer to the question almost always just cleared stated_size, as repair_b does.
+    # Asking again cost a whole extra call per post for nothing.
     return hard, soft
 
 
@@ -418,10 +424,6 @@ def compute_confidence(*, self_confidence: float, agree: float | None, first_try
                    "partial": partial, "penalties": penalties}
 
 
-def needs_review(confidence: float, subtopic_id: str) -> bool:
-    return confidence < CONFIDENCE["review_below"] or subtopic_id == OTHER_ID
-
-
 # ------------------------------------------------------------------ context and cache key
 
 _DUMMY = Post(activity_id=0, text="dummy post text", attachment_title="t", attachment_site="s",
@@ -439,6 +441,13 @@ class Context:
     num_ctx: int = 8192
     think: bool = False
     options: dict | None = None
+    # Step 13. None of these three is part of the cache key: they do not change a finished answer
+    # (an answer that hit the length cap is a failure, never stored), so changing them must not
+    # make old results look out of date.
+    num_predict_a: int = NUM_PREDICT_A      # most tokens the model may write in call A
+    num_predict_b: int = NUM_PREDICT_B      # most tokens the model may write in call B
+    timeout: int = TIMEOUT_SECONDS          # seconds to wait for one call before giving up on the post
+    review: RV.ReviewRule | None = None     # None = load rubrics/review_rule.v1.yaml
     system_a: str = field(init=False)
     system_b: str = field(init=False)
     schema_a: dict = field(init=False)
@@ -447,6 +456,12 @@ class Context:
     options_sig: str = field(init=False)
 
     def __post_init__(self):
+        for name in ("num_predict_a", "num_predict_b", "timeout"):
+            value = getattr(self, name)
+            if not _is_int(value) or value < 1:
+                raise ValueError(f"{name} must be a whole number of 1 or more, got {value!r}")
+        if self.review is None:
+            self.review = RV.load_review_rule()
         self.system_a = system_prompt_a(self.taxonomy, self.rubrics)
         self.system_b = system_prompt_b(self.rubrics)
         self.schema_a = schema_a(self.taxonomy)
@@ -481,8 +496,9 @@ def _ask(chat: ChatFn, ctx: Context, system: str, user: str, schema: dict, num_p
     """Ask, check, and retry ONCE with the mistakes pointed out.
 
     Returns (answer, attempts, leftover soft problems, usage, what was wrong with the first
-    answer). Raises ClassifyFailed when the second answer still has hard problems.
-    OllamaUnavailable is never retried.
+    answer). Raises ClassifyFailed when the second answer still has hard problems, and at once
+    (no retry) when the call times out: a stalled call is not fixed by asking again, and the run
+    would lose another `timeout` seconds. OllamaUnavailable is never retried either.
     """
     usage = {"seconds": 0.0, "input_tokens": 0, "output_tokens": 0}
     feedback = ""
@@ -493,9 +509,11 @@ def _ask(chat: ChatFn, ctx: Context, system: str, user: str, schema: dict, num_p
         try:
             answer, stats = chat(ctx.model, system, user + feedback, schema, url=ctx.url,
                                  num_ctx=ctx.num_ctx, think=ctx.think, num_predict=num_predict,
-                                 options=ctx.options)
+                                 timeout=ctx.timeout, options=ctx.options)
         except OllamaUnavailable:
             raise
+        except LLMTimeout as exc:
+            raise ClassifyFailed(f"timeout: {exc}")
         except LLMError as exc:
             answer, hard, soft = None, [str(exc)], []
         else:
@@ -522,10 +540,10 @@ def classify_post(post: Post, ctx: Context, chat: ChatFn = chat_json) -> dict:
     """Classify one post on all seven lenses. Returns the record to store."""
     baseline = scoring.baseline_cover_minutes(post.word_count, ctx.rubrics)
 
-    ans_a, tries_a, _, use_a, why_a = _ask(chat, ctx, ctx.system_a, user_prompt_a(post), ctx.schema_a, 400,
-                                    lambda a: check_a(a, ctx.taxonomy))
+    ans_a, tries_a, _, use_a, why_a = _ask(chat, ctx, ctx.system_a, user_prompt_a(post), ctx.schema_a,
+                                    ctx.num_predict_a, lambda a: check_a(a, ctx.taxonomy))
     ans_b, tries_b, _, use_b, why_b = _ask(chat, ctx, ctx.system_b, user_prompt_b(post, baseline),
-                                    ctx.schema_b, 1500, lambda a: check_b(a, ctx.rubrics))
+                                    ctx.schema_b, ctx.num_predict_b, lambda a: check_b(a, ctx.rubrics))
     fixed, repairs = repair_b(ans_b, ctx.rubrics)
 
     stated = (scoring.stated_minutes(fixed["stated_count"], fixed["stated_unit"], ctx.rubrics)
@@ -555,6 +573,9 @@ def classify_post(post: Post, ctx: Context, chat: ChatFn = chat_json) -> dict:
         warnings.append("text_partial")
     if clustering is None:
         warnings.append("no_clustering_opinion")
+    assert ctx.review is not None                  # set in Context.__post_init__ (helps the type checker)
+    reasons = RV.review_reasons(ctx.review, confidence=conf, subtopic_id=subtopic,
+                                clustering_subtopic_id=clustering, taxonomy=ctx.taxonomy)
 
     return {
         "activity_id": post.activity_id,
@@ -573,7 +594,10 @@ def classify_post(post: Post, ctx: Context, chat: ChatFn = chat_json) -> dict:
                        "alignment": fixed["alignment_reason"]},
         "confidence": conf,
         "confidence_parts": parts,
-        "needs_review": needs_review(conf, subtopic),
+        "needs_review": bool(reasons),
+        "review_reasons": reasons,
+        "review_rule_version": ctx.review.version,
+        "review_rule_sha": ctx.review.sha,
         "warnings": warnings + repairs,
         "clustering_subtopic_id": clustering,
         "model": ctx.model,

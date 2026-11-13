@@ -19,6 +19,13 @@ Examples (run from the repo root, after `ollama pull qwen3:8b`):
   # classify everything, then re-run the same command to resume after a stop
   python pipeline/step9_classify.py --csv ... --taxonomy ... --assignments ...
 
+  # Step 13 options: give a --think run room to write (the thinking uses up the answer length),
+  # wait at most 120 seconds per question, use another review rule file
+  python pipeline/step9_classify.py ... --think --num-predict 4000 --timeout 120 --review-rule my_rule.yaml
+
+A post whose question times out is NOT retried: it goes into <out>.failures.jsonl with the reason
+"timeout" and the run moves on. Run the same command again later and only those posts are redone.
+
 Exit status: 0 = all done, 1 = some posts failed (listed in <out>.failures.jsonl), 2 = cannot start
 (bad input file, Ollama not running).
 """
@@ -34,6 +41,7 @@ from pathlib import Path
 
 import classifier as C
 import classify_inputs as I
+import review_rule as RV
 import rubrics as R
 import scoring
 from ollama_json import OLLAMA_URL, OllamaUnavailable, chat_json
@@ -71,6 +79,17 @@ def append_line(path: Path, record: dict) -> None:
         os.fsync(fh.fileno())
 
 
+def positive_int(text: str) -> int:
+    """argparse type: a whole number of 1 or more, with a plain-language error."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a whole number")
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{value} is too small, it must be 1 or more")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Classify saved posts on all 7 lenses (Step 9).")
     p.add_argument("--csv", required=True, help="posts file, e.g. posts_with_save_dates.csv")
@@ -84,6 +103,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url", default=OLLAMA_URL)
     p.add_argument("--num-ctx", type=int, default=8192)
     p.add_argument("--think", action="store_true", help="let the model think first (slower)")
+    p.add_argument("--num-predict", type=positive_int,
+                   help=f"most tokens the model may write per question, for both questions (default: "
+                        f"{C.NUM_PREDICT_A} for the subtopic question, {C.NUM_PREDICT_B} for the other one). "
+                        "With --think raise it, for example to 4000: the thinking uses up the answer length")
+    p.add_argument("--timeout", type=positive_int, default=C.TIMEOUT_SECONDS,
+                   help="seconds to wait for one question before giving up on the post (default: %(default)s). "
+                        "A timed-out post is listed in the failures file and not retried")
+    p.add_argument("--review-rule", default=str(RV.DEFAULT_PATH),
+                   help="which posts go to review: rubrics/review_rule.v1.yaml")
     p.add_argument("--presence-penalty", type=float, help="override Ollama's default for this model")
     p.add_argument("--show-prompt", action="store_true", help="print the prompts for the first post and stop")
     return p
@@ -93,10 +121,11 @@ def main(argv: list[str] | None = None, chat=chat_json) -> int:
     args = build_parser().parse_args(argv)
     try:
         rub = R.load_rubrics(args.rubrics)
+        review = RV.load_review_rule(args.review_rule)
         tax = I.load_taxonomy(args.taxonomy)
         assignments = I.load_assignments(args.assignments, tax)
         posts, skipped = I.load_posts(args.csv)
-    except (R.RubricsError, I.InputError) as exc:
+    except (R.RubricsError, RV.ReviewRuleError, I.InputError) as exc:
         print(exc)
         return 2
 
@@ -116,7 +145,10 @@ def main(argv: list[str] | None = None, chat=chat_json) -> int:
 
     options = {"presence_penalty": args.presence_penalty} if args.presence_penalty is not None else None
     ctx = C.Context(model=args.model, taxonomy=tax, rubrics=rub, assignments=assignments, url=args.url,
-                    num_ctx=args.num_ctx, think=args.think, options=options)
+                    num_ctx=args.num_ctx, think=args.think, options=options,
+                    num_predict_a=args.num_predict or C.NUM_PREDICT_A,
+                    num_predict_b=args.num_predict or C.NUM_PREDICT_B,
+                    timeout=args.timeout, review=review)
 
     if args.show_prompt:
         if not posts:
@@ -172,7 +204,10 @@ def main(argv: list[str] | None = None, chat=chat_json) -> int:
     basis = {b: sum(1 for r in stored if r["time"]["basis"] == b) for b in R.BASIS_IDS}
     print(f"\nDone: {len(stored)} classified, {already} were already done, {failed} failed.")
     if stored:
-        print(f"Needs review: {sum(r['needs_review'] for r in stored)}. Time basis: "
+        flagged = sum(r["needs_review"] for r in stored)
+        why = ", ".join(f"{name} {n}" for name in RV.REASONS
+                        if (n := sum(name in r["review_reasons"] for r in stored)))
+        print(f"Needs review: {flagged}{f' ({why})' if why else ''}. Time basis: "
               + ", ".join(f"{k} {v}" for k, v in basis.items())
               + f". Average {sum(r['seconds'] for r in stored) / len(stored):.1f} s per post.")
     if failed:

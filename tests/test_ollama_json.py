@@ -100,6 +100,36 @@ def test_timeout_and_server_errors_are_retryable(monkeypatch):
         oj.chat_json("m", "s", "u", SCHEMA, timeout=5)
     assert not isinstance(err.value, oj.OllamaUnavailable)
 
+
+def test_a_timeout_has_its_own_error_type_and_names_the_limit(monkeypatch):
+    # Step 13: the classifier gives up on a post at once when the call times out, so it must be able to tell
+    for exc in (requests.exceptions.ReadTimeout, requests.exceptions.Timeout):
+        def slow(*a, _exc=exc, **k):
+            raise _exc()
+        monkeypatch.setattr(requests, "post", slow)
+        with pytest.raises(oj.LLMTimeout, match="No answer within 7 seconds") as err:
+            oj.chat_json("m", "s", "u", SCHEMA, timeout=7)
+        assert isinstance(err.value, oj.LLMError) and not isinstance(err.value, oj.OllamaUnavailable)
+
+
+def test_a_connection_timeout_means_ollama_is_not_there(monkeypatch):
+    # ConnectTimeout is both a connection error and a timeout; "cannot reach Ollama" is the useful message
+    def nobody(*a, **k):
+        raise requests.exceptions.ConnectTimeout()
+    monkeypatch.setattr(requests, "post", nobody)
+    with pytest.raises(oj.OllamaUnavailable):
+        oj.chat_json("m", "s", "u", SCHEMA)
+
+
+def test_the_timeout_is_passed_to_the_request(monkeypatch):
+    seen = {}
+    def fake_post(url, json=None, timeout=None):
+        seen["timeout"] = timeout
+        return FakeResponse(body={"message": {"content": '{"a": 1}'}})
+    monkeypatch.setattr(requests, "post", fake_post)
+    oj.chat_json("m", "s", "u", SCHEMA, timeout=42)
+    assert seen["timeout"] == 42
+
     monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(status=500))
     with pytest.raises(oj.LLMError) as err:
         oj.chat_json("m", "s", "u", SCHEMA)
