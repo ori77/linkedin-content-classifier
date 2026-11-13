@@ -12,8 +12,9 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 
 import classifier as C  # noqa: E402
 import classify_inputs as I  # noqa: E402
+import review_rule as RV  # noqa: E402
 import rubrics as R  # noqa: E402
-from ollama_json import LLMError, OllamaUnavailable  # noqa: E402
+from ollama_json import LLMError, LLMTimeout, OllamaUnavailable  # noqa: E402
 
 RUB = R.load_rubrics(ROOT / "rubrics" / "rubrics.v1.yaml")        # most tests: the numbers are the v1 ones
 RUB2 = R.load_rubrics(ROOT / "rubrics" / "rubrics.v2.yaml")       # Step 10: the default rubrics
@@ -279,13 +280,21 @@ def test_check_b_missing_key_is_hard():
     ({"summary": words(30) + "\n" + words(30)}, "no line breaks"),
     ({"summary": "- " + words(60)}, "bullet"),
     ({"summary": "1. " + words(60)}, "bullet"),
-    ({"basis": "stated_in_post"}, "stated_size is empty"),
-    ({"stated_size": "8-week course"}, "basis is not stated_in_post"),
     ({"stated_count": -2}, "stated_count must be 0 or more"),
 ])
 def test_check_b_soft_problems(change, fragment):
     hard, soft = C.check_b(good_b(**change), RUB)
     assert hard == [] and any(fragment in s for s in soft)
+
+
+@pytest.mark.parametrize("change", [
+    {"basis": "stated_in_post"},                                  # says "stated" but quotes nothing
+    {"stated_size": "8-week course"},                             # quotes a size but says post_only
+    {"basis": "estimated_from_post", "stated_size": "8 weeks"},
+])
+def test_check_b_does_not_ask_again_for_a_stated_size_that_repair_can_fix(change):
+    # Step 13 (item 46): repair_b fixes these in code, so they are no reason for a second call
+    assert C.check_b(good_b(**change), RUB) == ([], [])
 
 
 @pytest.mark.parametrize("value", [-1, 11, 7.5])
@@ -514,10 +523,9 @@ def test_confidence_parts_are_reported():
     assert parts == {"self": 0.6, "agree": 0.7, "valid": 0.7, "partial": True, "penalties": 1}
 
 
-def test_needs_review_threshold_and_other():
-    assert C.needs_review(0.59, "rag.chunking") is True
-    assert C.needs_review(0.60, "rag.chunking") is False
-    assert C.needs_review(0.99, "other.general") is True
+def test_the_review_threshold_is_no_longer_a_confidence_setting():
+    # Step 13: the whole review rule moved to rubrics/review_rule.v1.yaml (see tests/test_review_rule.py)
+    assert "review_below" not in C.CONFIDENCE and not hasattr(C, "needs_review")
 
 
 # ============================================================ context and cache key
@@ -912,3 +920,162 @@ def test_interview_mention_end_to_end_is_flagged_but_not_penalised(tax):
     assert "interview_mentioned" in rec["warnings"]
     assert rec["content_type"] == "tutorial" and rec["confidence"] == base["confidence"]
     assert "interview_mentioned" not in base["warnings"]
+
+
+# ============================================================ Step 13: stated size, settings, timeout, review
+
+def b_calls(chat):
+    return [c for c in chat.calls if c["kind"] == "b"]
+
+
+def test_a_stated_size_with_the_wrong_basis_is_repaired_without_a_second_call(tax):
+    # real case (item 46): the model quoted a size but said post_only. Before Step 13 this cost a second call.
+    b = good_b(basis="post_only", stated_size="8-week course", stated_count=8, stated_unit="weeks")
+    rec, chat, _ = run(tax, FakeChat(b=[b]))
+    assert len(b_calls(chat)) == 1 and rec["attempts"] == {"topic": 1, "rest": 1}
+    assert rec["retry_reasons"] == {"topic": [], "rest": []}
+    assert "repaired:stated_size" in rec["warnings"]
+    t = rec["time"]
+    assert t["basis"] == "post_only" and t["stated_size"] == "" and (t["stated_count"], t["stated_unit"]) == (0, "none")
+    assert rec["confidence"] == 0.85               # a repair lowers the validity part to 0.7, as a retry did
+
+
+def test_a_stated_basis_without_the_posts_words_is_repaired_without_a_second_call(tax):
+    rec, chat, _ = run(tax, FakeChat(b=[good_b(basis="stated_in_post", stated_size="")]))
+    assert len(b_calls(chat)) == 1 and rec["attempts"]["rest"] == 1
+    assert rec["time"]["basis"] == "post_only" and "repaired:basis" in rec["warnings"]
+    assert rec["confidence"] == 0.85
+
+
+def test_other_soft_problems_still_get_a_second_call(tax):
+    # only the stated-size mismatch moved to repair: a summary that is too short is still re-asked
+    rec, chat, _ = run(tax, FakeChat(b=[good_b(summary=words(10)), good_b()]))
+    assert len(b_calls(chat)) == 2 and rec["attempts"]["rest"] == 2
+
+
+def test_num_predict_and_timeout_have_the_documented_defaults(tax):
+    assert (C.NUM_PREDICT_A, C.NUM_PREDICT_B, C.TIMEOUT_SECONDS) == (400, 1500, 300)
+    ctx = make_ctx(tax)
+    assert (ctx.num_predict_a, ctx.num_predict_b, ctx.timeout) == (400, 1500, 300)
+    _, chat, _ = run(tax)
+    for call in chat.calls:
+        assert call["timeout"] == 300
+
+
+def test_num_predict_and_timeout_reach_the_model_on_every_call_including_the_retry(tax):
+    chat = FakeChat(a=[{"evidence": "x", "subtopic_id": "rag.nonsense"}, GOOD_A], b=[good_b(summary=words(10)), good_b()])
+    _, chat, _ = run(tax, chat, num_predict_a=700, num_predict_b=4000, timeout=45)
+    assert [c["kind"] for c in chat.calls] == ["a", "a", "b", "b"]
+    for call in chat.calls:
+        assert call["timeout"] == 45
+        assert call["num_predict"] == (700 if call["kind"] == "a" else 4000)
+
+
+@pytest.mark.parametrize("name,value", [
+    ("num_predict_a", 0), ("num_predict_b", -5), ("timeout", 0), ("timeout", -1),
+    ("timeout", 1.5), ("num_predict_a", True), ("timeout", "300"),
+])
+def test_context_rejects_unusable_limits(tax, name, value):
+    with pytest.raises(ValueError, match=name):
+        make_ctx(tax, **{name: value})
+
+
+def test_a_timeout_on_call_b_fails_the_post_at_once_without_asking_again(tax):
+    chat = FakeChat(b=[LLMTimeout("No answer within 300 seconds"), good_b()])
+    ctx = make_ctx(tax)
+    with pytest.raises(C.ClassifyFailed, match="timeout: No answer within 300 seconds"):
+        C.classify_post(POST, ctx, chat=chat)
+    assert len(b_calls(chat)) == 1                  # the second answer in the script was never asked for
+
+
+def test_a_timeout_on_call_a_fails_the_post_before_call_b(tax):
+    chat = FakeChat(a=[LLMTimeout("No answer within 300 seconds"), GOOD_A])
+    with pytest.raises(C.ClassifyFailed, match="timeout"):
+        C.classify_post(POST, make_ctx(tax), chat=chat)
+    assert [c["kind"] for c in chat.calls] == ["a"]
+
+
+def test_an_ordinary_llm_error_is_still_retried_once(tax):
+    # LLMTimeout is a kind of LLMError, but only the timeout skips the retry
+    chat = FakeChat(b=[LLMError("Answer was not valid JSON"), good_b()])
+    rec, chat, _ = run(tax, chat)
+    assert len(b_calls(chat)) == 2 and rec["attempts"]["rest"] == 2
+
+
+def test_the_timeout_error_is_a_kind_of_llm_error():
+    assert issubclass(LLMTimeout, LLMError) and not issubclass(LLMTimeout, OllamaUnavailable)
+
+
+def test_a_timeout_does_not_stop_the_run_like_a_missing_ollama(tax):
+    with pytest.raises(OllamaUnavailable):
+        C.classify_post(POST, make_ctx(tax), chat=FakeChat(a=[OllamaUnavailable("down")]))
+
+
+def test_limits_and_the_review_rule_are_not_part_of_the_cache_key(tax):
+    base = C.cache_key(POST, make_ctx(tax))
+    rule = RV.ReviewRule(version="other", confidence_below=0.5, other_general=False, topic_disagrees=False, sha="x")
+    assert C.cache_key(POST, make_ctx(tax, num_predict_a=900, num_predict_b=9000, timeout=10, review=rule)) == base
+
+
+def test_the_default_review_rule_is_the_shipped_file(tax):
+    ctx = make_ctx(tax)
+    shipped = RV.load_review_rule()
+    assert ctx.review == shipped and shipped.version == "v1"
+
+
+def test_record_carries_the_review_fields(tax):
+    rec, _, ctx = run(tax)
+    assert rec["needs_review"] is False and rec["review_reasons"] == []
+    assert rec["review_rule_version"] == "v1" and rec["review_rule_sha"] == ctx.review.sha
+    assert json.loads(json.dumps(rec))["review_reasons"] == []
+
+
+ONLY = dict(confidence_below=0.0, other_general=False, topic_disagrees=False)
+
+
+def rule(**over):
+    return RV.ReviewRule(version="t", sha="s", **{**ONLY, **over})
+
+
+def test_low_confidence_is_a_review_reason(tax):
+    rec, _, _ = run(tax, FakeChat(b=[good_b(self_confidence=0.2)]), review=rule(confidence_below=0.78))
+    assert rec["confidence"] == 0.64 and rec["review_reasons"] == ["low_confidence"] and rec["needs_review"] is True
+
+
+def test_other_general_is_a_review_reason(tax):
+    chat = FakeChat(a=[{"evidence": "nothing fits", "subtopic_id": "other.general"}])
+    rec, _, _ = run(tax, chat, assignments={1: "other.general"}, review=rule(other_general=True))
+    assert rec["review_reasons"] == ["other_general"] and rec["needs_review"] is True
+
+
+def test_other_general_can_be_switched_off(tax):
+    chat = FakeChat(a=[{"evidence": "nothing fits", "subtopic_id": "other.general"}])
+    rec, _, _ = run(tax, chat, assignments={1: "other.general"}, review=rule(other_general=False))
+    assert rec["review_reasons"] == [] and rec["needs_review"] is False
+
+
+def test_a_different_topic_from_the_clustering_is_a_review_reason(tax):
+    rec, _, _ = run(tax, assignments={1: "careers.interviews"}, review=rule(topic_disagrees=True))
+    assert rec["review_reasons"] == ["topic_disagrees_with_clustering"] and rec["needs_review"] is True
+
+
+def test_the_same_topic_with_another_subtopic_is_not_a_disagreement(tax):
+    rec, _, _ = run(tax, assignments={1: "rag.evaluation"}, review=rule(topic_disagrees=True))
+    assert rec["review_reasons"] == [] and rec["needs_review"] is False
+
+
+def test_a_post_the_clustering_could_not_place_is_not_a_disagreement(tax):
+    rec, _, _ = run(tax, assignments={1: "other.general"}, review=rule(topic_disagrees=True))
+    assert rec["review_reasons"] == [] and rec["needs_review"] is False
+
+
+def test_a_post_without_a_clustering_opinion_is_not_a_disagreement(tax):
+    rec, _, _ = run(tax, assignments={}, review=rule(topic_disagrees=True))
+    assert rec["review_reasons"] == []
+
+
+def test_with_the_shipped_rule_a_disagreeing_post_gets_both_reasons(tax):
+    # confidence 0.70 (see test_disagreement_with_clustering_lowers_confidence) is below the 0.78 line
+    rec, _, _ = run(tax, assignments={1: "careers.interviews"})
+    assert rec["confidence"] == 0.70
+    assert rec["review_reasons"] == ["low_confidence", "topic_disagrees_with_clustering"]

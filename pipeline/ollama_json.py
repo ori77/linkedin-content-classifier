@@ -22,6 +22,14 @@ class OllamaUnavailable(LLMError):
     """Ollama is not running, or does not have the model. Trying again will not help."""
 
 
+class LLMTimeout(LLMError):
+    """Ollama did not answer within the time limit (a stalled call, a sleeping laptop).
+
+    A subclass of LLMError, so code that only knows LLMError still catches it. The classifier
+    gives up on the post at once instead of asking again (Step 13).
+    """
+
+
 def strip_thinking(text):
     """Some Ollama versions put the model's reasoning inside <think>...</think> in the
     answer itself. Remove it so only the final answer is left."""
@@ -61,7 +69,7 @@ def chat_json(model, system, user, schema, url=OLLAMA_URL, num_ctx=8192,
     except requests.exceptions.ConnectionError:
         raise OllamaUnavailable("Cannot reach Ollama. Is it running? Try: ollama ps")
     except requests.exceptions.Timeout:
-        raise LLMError(f"No answer within {timeout} seconds")
+        raise LLMTimeout(f"No answer within {timeout} seconds")
 
     if response.status_code == 404:
         raise OllamaUnavailable(f"Ollama does not have '{model}'. Run: ollama pull {model}")

@@ -2,8 +2,13 @@
 Run:  python tools/mutation_check_classifier.py        (exit 0 = all killed)
 
 Not listed on purpose (no test could ever tell the difference):
-  * `not repairs` inside first_try: a repair only happens after a retry, which already makes it False.
   * the upper clamp of the confidence value: the weights add up to exactly 1.
+
+Step 13 moved things: the review rule is now in pipeline/review_rule.py (its mutations are in
+tools/mutation_check_step13.py) and check_b no longer asks again for a stated size that does not
+match the basis (repair_b fixes it), so the four mutations for those lines were removed here.
+Since Step 13 a repair can happen on the FIRST try, so `not repairs` inside first_try is now a
+real mutation (listed below), not an equivalent one.
 """
 import sys
 
@@ -28,8 +33,6 @@ MUTATIONS = [
     ("summary: too long accepted", 'elif n > s["hard_words"]["max"]:', "elif n > 10**6:"),
     ("summary: single line break accepted", 'if "\\n" in summary or "\\r" in summary:', 'if "\\n\\n" in summary:'),
     ("summary: bullets accepted", "if _BULLET_START.search(summary):", "if False:"),
-    ("basis: 'stated' without a quote accepted", 'if answer["basis"] == "stated_in_post" and not has_size:', "if False:"),
-    ("basis: quote without 'stated' accepted", 'if answer["basis"] != "stated_in_post" and has_size:', "if False:"),
     ("check_b: unknown stated_unit accepted", '("difficulty", DIFFICULTY_IDS), ("stated_unit", STATED_UNIT_IDS)):', '("difficulty", DIFFICULTY_IDS)):'),
     ("check_b: stated_count not a number accepted", '"self_confidence", "stated_count"):', '"self_confidence"):'),
     ("check_b: negative stated_count accepted", 'if answer["stated_count"] < 0:', "if False:"),
@@ -79,8 +82,6 @@ MUTATIONS = [
     ("confidence: partial text not penalised", 'c["partial_factor"] if partial else 1.0', "1.0"),
     ("confidence: warnings not penalised", 'c["warning_penalty"] * penalties', "0"),
     ("confidence: can go negative", "min(1.0, max(0.0, value))", "min(1.0, value)"),
-    ("needs_review: boundary", 'confidence < CONFIDENCE["review_below"]', 'confidence <= CONFIDENCE["review_below"]'),
-    ("needs_review: other.general not reviewed", " or subtopic_id == OTHER_ID", ""),
     # cache key and context
     ("cache_key: post id left out", "str(post.activity_id), ", ""),
     ("cache_key: settings left out", "ctx.options_sig, ", ""),
@@ -97,6 +98,7 @@ MUTATIONS = [
     ("ask: usable first answer thrown away", "if attempt == 1 and not hard:", "if False:"),
     # classify_post
     ("classify: topic retry not counted", "tries_a == 1 and tries_b == 1", "True and tries_b == 1"),
+    ("classify: a repair does not lower validity", "tries_a == 1 and tries_b == 1 and not repairs", "tries_a == 1 and tries_b == 1"),
     ("classify: cut-off text not partial", "post.truncated or looks_cut_off(post.text)", "post.truncated"),
     ("classify: long post not partial", "post.truncated or looks_cut_off(post.text)", "looks_cut_off(post.text)"),
     ("classify: model's cover used for a stated size", 'if fixed["basis"] == "stated_in_post" else None)', "if False else None)"),

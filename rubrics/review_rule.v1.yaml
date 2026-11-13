@@ -1,0 +1,31 @@
+# Review rule v1 (Step 13): which classified posts go to the review queue.
+# Read by pipeline/review_rule.py. Kept apart from rubrics.v2.yaml on purpose: this rule does not
+# change what the model is asked, so editing it must not change the rubrics fingerprint (which
+# is part of the cache key) and must not make finished results look stale. The Step 15 loader
+# re-applies the rule to stored records, so a new number needs no new model run.
+#
+# A post is flagged when ANY enabled signal fires. The record keeps the reasons.
+
+version: v1
+
+# Flag when the post's confidence is below this number (0 to 1; 0 switches this signal off).
+# CALIBRATED on the 30 reviewed gold posts with gemma4:e4b (Step 13, 2026-11-13). Confidence
+# values there fall into groups (0.61 to 0.77, then 0.79, then 0.87 and up). Anything from
+# 0.78 up to 0.79 gives the same result: 12 of 30 posts flagged by confidence alone, 11 of the
+# 17 wrong subtopics caught, 1 flagged post was right. Raising it to 0.90 flags 3 more posts,
+# 2 of them wrong and 1 right (15 flagged, 13 of 17 caught). ASSUMPTION: n is only 30 and the posts were also
+# used to tune the prompts, so treat the number as a starting point and revisit it after the
+# full run (item 48). The model is wrong on 17 of those 30 subtopics, so no number can catch
+# most of them while flagging only a quarter of the posts.
+# With all three signals on (the shipped file): 13 of 30 posts flagged (43%), 11 of the 17 wrong
+# subtopics caught, 2 flagged posts were right. The old rule (0.60 or other.general) flagged 1 of 30.
+# The topic-disagreement signal adds nothing at 0.78 because the confidence already contains the
+# agreement with the clustering; it stays as a safety net if the confidence weights change (item 18).
+confidence_below: 0.78
+
+# Flag every post the model put in other.general (it fits no subtopic).
+other_general: true
+
+# Flag posts whose TOPIC differs from the topic the earlier clustering gave them. A post the
+# clustering could not place (other.general) counts as "no opinion", not as a disagreement.
+topic_disagrees_with_clustering: true
