@@ -30,6 +30,10 @@ pipeline/taxonomy/*
 # Step 10 outputs
 gold/
 
+# Step 15: the database holds post text and links, keep it private
+/data/
+*.sqlite
+
 # Virtual environments
 .venv/
 venv/
