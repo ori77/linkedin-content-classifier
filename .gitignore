@@ -34,6 +34,9 @@ gold/
 /data/
 *.sqlite
 
+# Step 17: exports hold post titles, summaries and links, keep them private
+/exports/
+
 # Virtual environments
 .venv/
 venv/
