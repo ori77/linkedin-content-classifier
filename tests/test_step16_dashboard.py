@@ -479,3 +479,43 @@ def test_the_links_expander_lists_every_link_of_that_post(db, monkeypatch):
     assert len(shown) == 2
     assert all(x in shown[0] for x in ("https://lnkd.in/a1", "https://example.com/two", "https://lnkd.in/a3"))
     assert all(x in shown[1] for x in ("https://lnkd.in/f1", "https://example.com/f%282%29"))     # brackets are encoded
+
+
+# ============================================================ Step 17: the download buttons
+
+def downloads(block):
+    return [(b.proto.label, b.proto.disabled) for b in block.get("download_button")]
+
+
+def test_the_library_has_csv_and_json_download_buttons(db, monkeypatch):
+    at = start(db, monkeypatch)
+    assert downloads(at.tabs[0]) == [("⬇ These 6 posts as CSV", False), ("⬇ These 6 posts as JSON", False)]
+    assert [b.key for b in at.tabs[0].get("download_button")] == ["lib_dl_csv", "lib_dl_json"]
+
+
+def test_the_library_downloads_follow_the_filters(db, monkeypatch):
+    at = start(db, monkeypatch)
+    at.multiselect(key="lib_topics").select("careers").run()
+    assert downloads(at.tabs[0]) == [("⬇ These 1 posts as CSV", False), ("⬇ These 1 posts as JSON", False)]
+
+
+def test_nothing_to_download_when_the_filters_match_nothing(db, monkeypatch):
+    at = start(db, monkeypatch)
+    at.text_input(key="lib_text").set_value("zzzznothing").run()
+    assert downloads(at.tabs[0]) == [("⬇ These 0 posts as CSV", True), ("⬇ These 0 posts as JSON", True)]
+
+
+def test_the_review_tab_downloads_are_off_until_you_review_something(db, monkeypatch):
+    at = start(db, monkeypatch)
+    assert downloads(at.tabs[1]) == [("⬇ My 0 reviews as CSV", True), ("⬇ My 0 reviews as JSON", True)]
+    assert [b.key for b in at.tabs[1].get("download_button")] == ["rv_dl_csv", "rv_dl_json"]
+
+
+def test_the_review_downloads_count_every_review_whatever_the_library_filters_say(db, monkeypatch):
+    at = start(db, monkeypatch)
+    at.button(key="rv_ok_3").click().run()
+    at.button(key="rv_ok_6").click().run()
+    assert downloads(at.tabs[1]) == [("⬇ My 2 reviews as CSV", False), ("⬇ My 2 reviews as JSON", False)]
+    at.multiselect(key="lib_topics").select("careers").run()
+    assert downloads(at.tabs[1]) == [("⬇ My 2 reviews as CSV", False), ("⬇ My 2 reviews as JSON", False)]
+    assert downloads(at.tabs[0])[0] == ("⬇ These 1 posts as CSV", False)

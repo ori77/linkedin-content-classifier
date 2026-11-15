@@ -145,6 +145,7 @@ def load_library(con: sqlite3.Connection) -> list[dict]:
       model_subtopic_id, model_difficulty, model_content_type   what the model said
       subtopic_id, topic_id, difficulty, content_type            what counts now (your fix wins)
       reviewed, corrected_fields, review_note                    your review, if any
+      review_id, reviewed_at, use_as_example                     details of that review (None without one)
       status                  needs_review | reviewed | auto_accepted
       resource_links_list     all resource links as a list
     """
@@ -164,9 +165,13 @@ def load_library(con: sqlite3.Connection) -> list[dict]:
         row["reviewed"] = review is not None
         row["corrected_fields"] = {}
         row["review_note"] = None
+        row["review_id"] = row["reviewed_at"] = row["use_as_example"] = None
         if review is not None:
             fixes = _json(review["corrected_fields"], {})
             row["review_note"] = review["note"]
+            row["review_id"] = review["id"]
+            row["reviewed_at"] = review["created_at"]
+            row["use_as_example"] = bool(review["use_as_example"])
             for key, value in (fixes.items() if isinstance(fixes, dict) else []):
                 if key == "subtopic_id" and (row["taxonomy_version"], value) in names:
                     tid, tname, sname = names[(row["taxonomy_version"], value)]

@@ -33,6 +33,7 @@ from contextlib import closing
 import streamlit as st
 
 import dashboard_data as D
+import step17_export as X
 
 PAGE_SIZE = 20
 REASON_TEXT = {
@@ -131,6 +132,13 @@ def show_cards(rows: list[dict]) -> None:
         st.caption(f"Page {page} of {pages}")
 
 
+def show_downloads(specs: list[dict]) -> None:
+    """Draw the download buttons that step17_export.py describes (same files as the script writes)."""
+    for column, spec in zip(st.columns([1, 1, 2]), specs):
+        column.download_button(spec["label"], spec["data"], file_name=spec["file_name"], mime=spec["mime"],
+                               disabled=spec["disabled"], key=spec["key"])
+
+
 def library_tab(rows: list[dict]) -> None:
     opts = D.filter_options(rows)
     left, right = st.columns([1, 3])
@@ -147,6 +155,7 @@ def library_tab(rows: list[dict]) -> None:
         with top[2]:
             st.markdown(f"**{len(shown)} of {len(rows)} posts**")
         shown = D.sort_rows(shown, sort)
+        show_downloads(X.library_downloads(shown))
         if not shown:
             st.info("No posts match these filters.")
         elif view == "Table":
@@ -159,6 +168,7 @@ def library_tab(rows: list[dict]) -> None:
 
 def review_tab(con, rows: list[dict]) -> None:
     c = D.counts(rows)
+    show_downloads(X.correction_downloads(rows))
     include = st.checkbox("Also show posts I already reviewed", key="rv_include")
     skipped = st.session_state.setdefault("rv_skipped", [])
     queue = [r for r in D.review_queue(rows, include_reviewed=include) if r["id"] not in skipped]
