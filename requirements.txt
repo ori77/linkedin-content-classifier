@@ -4,7 +4,7 @@ numpy
 umap-learn
 scikit-learn
 pyyaml
-
+streamlit
 
 # tests
 pytest
